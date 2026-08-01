@@ -22,6 +22,9 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.text.font.FontWeight
+import androidx.lifecycle.Lifecycle
+import androidx.lifecycle.LifecycleEventObserver
+import androidx.compose.ui.platform.LocalLifecycleOwner
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
@@ -38,6 +41,21 @@ fun HomeScreen(
     val context = LocalContext.current
     var hasAccessibilityPermission by remember { mutableStateOf(isAccessibilityServiceEnabled(context, SubtitleAccessibilityService::class.java)) }
     var hasOverlayPermission by remember { mutableStateOf(Settings.canDrawOverlays(context)) }
+
+    // Automatically check and update permissions whenever the app returns to foreground
+    val lifecycleOwner = LocalLifecycleOwner.current
+    DisposableEffect(lifecycleOwner) {
+        val observer = LifecycleEventObserver { _, event ->
+            if (event == Lifecycle.Event.ON_RESUME) {
+                hasAccessibilityPermission = isAccessibilityServiceEnabled(context, SubtitleAccessibilityService::class.java)
+                hasOverlayPermission = Settings.canDrawOverlays(context)
+            }
+        }
+        lifecycleOwner.lifecycle.addObserver(observer)
+        onDispose {
+            lifecycleOwner.lifecycle.removeObserver(observer)
+        }
+    }
 
     // Refresh permissions when screen is visible
     LaunchedEffect(Unit) {
@@ -298,20 +316,64 @@ fun PermissionRow(
 }
 
 /**
- * Checks if a specific AccessibilityService is enabled in Android Settings
+ * Checks if a specific AccessibilityService is enabled in Android Settings.
+ * Uses multiple robust strategies to ensure compatibility with all devices (including Xiaomi HyperOS).
  */
 fun isAccessibilityServiceEnabled(context: Context, service: Class<out AccessibilityService>): Boolean {
-    val expectedComponentName = "${context.packageName}/${service.name}"
-    val settingValue = Settings.Secure.getString(
-        context.contentResolver,
-        Settings.Secure.ENABLED_ACCESSIBILITY_SERVICES
-    ) ?: return false
-
-    val colonSplitter = settingValue.split(":")
-    for (componentName in colonSplitter) {
-        if (componentName.equals(expectedComponentName, ignoreCase = true)) {
-            return true
+    // Strategy 1: Check via official AccessibilityManager
+    try {
+        val am = context.getSystemService(Context.ACCESSIBILITY_SERVICE) as? android.view.accessibility.AccessibilityManager
+        if (am != null) {
+            val enabledServices = am.getEnabledAccessibilityServiceList(android.accessibilityservice.AccessibilityServiceInfo.FEEDBACK_ALL_MASK)
+            for (enabledService in enabledServices) {
+                val serviceInfo = enabledService.resolveInfo?.serviceInfo
+                if (serviceInfo != null) {
+                    if (serviceInfo.packageName == context.packageName && serviceInfo.name == service.name) {
+                        return true
+                    }
+                }
+            }
         }
+    } catch (e: Exception) {
+        // Fallback to secure settings parsing
+    }
+
+    // Strategy 2: Parse Settings.Secure.ENABLED_ACCESSIBILITY_SERVICES manually with full component matching
+    try {
+        val expectedPackage = context.packageName
+        val expectedClassShort = "." + service.simpleName
+        val expectedClassFull = service.name
+
+        val settingValue = Settings.Secure.getString(
+            context.contentResolver,
+            Settings.Secure.ENABLED_ACCESSIBILITY_SERVICES
+        ) ?: return false
+
+        val colonSplitter = settingValue.split(":")
+        for (componentStr in colonSplitter) {
+            if (componentStr.isBlank()) continue
+            
+            val slashIndex = componentStr.indexOf('/')
+            if (slashIndex > 0 && slashIndex < componentStr.length - 1) {
+                val pkg = componentStr.substring(0, slashIndex).trim()
+                val cls = componentStr.substring(slashIndex + 1).trim()
+                
+                if (pkg.equals(expectedPackage, ignoreCase = true)) {
+                    if (cls.equals(expectedClassFull, ignoreCase = true) || 
+                        cls.equals(expectedClassShort, ignoreCase = true) || 
+                        cls.endsWith(service.simpleName, ignoreCase = true)) {
+                        return true
+                    }
+                }
+            } else {
+                if (componentStr.contains(service.simpleName, ignoreCase = true) && 
+                    componentStr.contains(expectedPackage, ignoreCase = true)) {
+                    return true
+                }
+            }
+        }
+    } catch (e: Exception) {
+        // Safe fallback
     }
     return false
 }
