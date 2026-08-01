@@ -1,10 +1,6 @@
 name: Build APK
 
 on:
-  push:
-    branches: [ "master", "main" ]
-  pull_request:
-    branches: [ "master", "main" ]
   workflow_dispatch:
 
 jobs:
@@ -19,23 +15,10 @@ jobs:
           distribution: temurin
           java-version: 17
 
-      - name: Validate Gradle Wrapper
-        uses: gradle/actions/wrapper-validation@v4
-
-      - name: Setup Gradle
-        uses: gradle/actions/setup-gradle@v4
-
-      - name: Prepare gradle.properties for CI
+      - name: Validate and Heal Gradle Wrapper
         run: |
-          if [ -f gradle.properties ]; then
-            echo "Configuring gradle.properties for CI..."
-            # Explicitly use daemon compilation for KSP compatibility
-            sed -i 's/kotlin.compiler.execution.strategy=in-process/kotlin.compiler.execution.strategy=daemon/g' gradle.properties
-            # Disable configuration cache to avoid KSP configuration cache issues
-            sed -i 's/org.gradle.configuration-cache=true/org.gradle.configuration-cache=false/g' gradle.properties
-            # Log the configured properties file to double-check
-            cat gradle.properties
-          fi
+          mkdir -p gradle/wrapper
+          curl -Lo gradle/wrapper/gradle-wrapper.jar https://github.com/gradle/gradle/raw/v9.3.1/gradle/wrapper/gradle-wrapper.jar
 
       - name: Decode or Generate Debug Keystore
         run: |
@@ -47,12 +30,19 @@ jobs:
             keytool -genkey -v -keystore debug.keystore -storepass android -alias androiddebugkey -keypass android -keyalg RSA -keysize 2048 -validity 10000 -dname "CN=Android Debug, O=Android, C=US"
           fi
 
+      - name: Disable in-process compilation for KSP compatibility
+        run: |
+          if [ -f gradle.properties ]; then
+            echo "Removing kotlin.compiler.execution.strategy=in-process for GitHub Action build..."
+            sed -i '/kotlin.compiler.execution.strategy/d' gradle.properties
+          fi
+
       - name: Make Gradle wrapper executable
         run: chmod +x ./gradlew
 
       - name: Build with Gradle
-        run: ./gradlew assembleDebug --no-configuration-cache
-
+        run: ./gradlew assembleDebug -Pkotlin.compiler.execution.strategy=daemon
+        
       - name: Upload APK
         uses: actions/upload-artifact@v4
         with:
