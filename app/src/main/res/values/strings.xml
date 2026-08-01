@@ -1,0 +1,4 @@
+<resources>
+    <string name="app_name">Live Subtitle Translator</string>
+    <string name="accessibility_desc">Enables real-time subtitle scanning, on-screen text recognition (OCR) fallback, and translating visible subtitles into Tamil with speech synthesis.</string>
+</resources>

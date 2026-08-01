@@ -1,0 +1,6 @@
+{
+  "name": "Live Subtitle Translator",
+  "description": "Real-time on-screen subtitle translator to Tamil with AI Voice text-to-speech.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
