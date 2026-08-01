@@ -22,6 +22,6 @@ dependencyResolutionManagement {
   }
 }
 
-rootProject.name = "Live Subtitle Translator"
+rootProject.name = "SnackRoute Pro"
 
 include(":app")
