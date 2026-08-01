@@ -20,6 +20,12 @@ jobs:
           mkdir -p gradle/wrapper
           curl -Lo gradle/wrapper/gradle-wrapper.jar https://github.com/gradle/gradle/raw/v9.3.1/gradle/wrapper/gradle-wrapper.jar
 
+      - name: Setup Gradle
+        uses: gradle/actions/setup-gradle@v4
+
+      - name: Generate Local Wrapper Scripts
+        run: gradle wrapper
+
       - name: Decode or Generate Debug Keystore
         run: |
           if [ -f debug.keystore.base64 ]; then
