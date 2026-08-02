@@ -2,6 +2,8 @@ package com.example
 
 import androidx.compose.ui.test.junit4.createComposeRule
 import androidx.compose.ui.test.onRoot
+import androidx.test.core.app.ApplicationProvider
+import com.example.data.SettingsManager
 import com.example.service.FloatingOverlayContent
 import com.example.ui.theme.MyApplicationTheme
 import com.github.takahirom.roborazzi.RobolectricDeviceQualifiers
@@ -23,6 +25,9 @@ class GreetingScreenshotTest {
 
   @Test
   fun greeting_screenshot() {
+    val context = ApplicationProvider.getApplicationContext<android.content.Context>()
+    val settingsManager = SettingsManager(context)
+
     composeTestRule.setContent { 
       MyApplicationTheme(darkTheme = true) { 
         FloatingOverlayContent(
@@ -30,8 +35,17 @@ class GreetingScreenshotTest {
           translationFlow = MutableStateFlow("உலகிற்கு வணக்கம்"),
           isTranslatingFlow = MutableStateFlow(true),
           isMutedFlow = MutableStateFlow(false),
+          settingsManager = settingsManager,
           onToggleMute = {},
-          onStop = {}
+          onStartTranslation = {},
+          onPauseTranslation = {},
+          onStop = {},
+          onDrag = { _, _ -> },
+          onSelectCaptionArea = {},
+          onOpenSettings = {},
+          maxMusicVolume = 15,
+          currentMusicVolume = 8,
+          onOriginalVolumeChanged = {}
         )
       } 
     }

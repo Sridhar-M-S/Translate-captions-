@@ -34,7 +34,7 @@ class TtsManager(private val context: Context) : TextToSpeech.OnInitListener {
         }
     }
 
-    fun speak(text: String, speed: Float = 1.0f, pitch: Float = 1.0f) {
+    fun speak(text: String, speed: Float = 1.0f, pitch: Float = 1.0f, gender: String = "female", volume: Float = 1.0f) {
         if (!isInitialized) {
             pendingText = text
             return
@@ -43,20 +43,43 @@ class TtsManager(private val context: Context) : TextToSpeech.OnInitListener {
             tts?.setSpeechRate(speed)
             tts?.setPitch(pitch)
             
-            // Try to set high-quality Tamil voice if available
+            // Try to set high-quality Tamil voice based on requested gender if available
             val voices = tts?.voices
             if (voices != null) {
-                val tamilVoice = voices.find { voice ->
-                    voice.locale.language == "ta" && !voice.isNetworkConnectionRequired
-                } ?: voices.find { voice ->
+                val tamilVoices = voices.filter { voice ->
                     voice.locale.language == "ta"
                 }
-                if (tamilVoice != null) {
-                    tts?.voice = tamilVoice
+                
+                if (tamilVoices.isNotEmpty()) {
+                    val matchedVoice = if (gender.lowercase() == "male") {
+                        // Look for typical male voice markers (e.g., "-man-", "-male-", "tam" for tamil male, etc.)
+                        tamilVoices.find { voice ->
+                            voice.name.contains("male", ignoreCase = true) ||
+                            voice.name.contains("man", ignoreCase = true) ||
+                            voice.name.contains("tam", ignoreCase = true)
+                        } ?: tamilVoices.firstOrNull()
+                    } else {
+                        // Look for typical female voice markers
+                        tamilVoices.find { voice ->
+                            voice.name.contains("female", ignoreCase = true) ||
+                            voice.name.contains("woman", ignoreCase = true) ||
+                            voice.name.contains("taf", ignoreCase = true)
+                        } ?: tamilVoices.firstOrNull()
+                    }
+                    if (matchedVoice != null) {
+                        tts?.voice = matchedVoice
+                    }
                 }
             }
 
-            tts?.speak(text, TextToSpeech.QUEUE_FLUSH, null, "LiveSubtitleTr")
+            // Set translation voice volume relative multiplier
+            val params = android.os.Bundle().apply {
+                putString(TextToSpeech.Engine.KEY_PARAM_VOLUME, volume.toString())
+                // Use STREAM_ACCESSIBILITY so we can mute stream_music without muting translation
+                putInt(TextToSpeech.Engine.KEY_PARAM_STREAM, android.media.AudioManager.STREAM_ACCESSIBILITY)
+            }
+
+            tts?.speak(text, TextToSpeech.QUEUE_FLUSH, params, "LiveSubtitleTr")
         } catch (e: Exception) {
             Log.e("TtsManager", "Error speaking text", e)
         }

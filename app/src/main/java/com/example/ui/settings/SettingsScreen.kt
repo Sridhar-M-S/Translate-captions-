@@ -34,6 +34,7 @@ fun SettingsScreen(
     var isOverlayEnabled by remember { mutableStateOf(settingsManager.isOverlayEnabled) }
     var isOcrEnabled by remember { mutableStateOf(settingsManager.isOcrEnabled) }
     var ocrSensitivity by remember { mutableStateOf(settingsManager.ocrSensitivity) }
+    var ocrRegion by remember { mutableStateOf(settingsManager.ocrRegion) }
 
     Column(
         modifier = Modifier
@@ -182,6 +183,47 @@ fun SettingsScreen(
                             modifier = Modifier.testTag("speech_pitch_slider")
                         )
                     }
+
+                    Divider(color = Color.White.copy(alpha = 0.08f))
+
+                    // Voice Gender Selection
+                    var voiceGender by remember { mutableStateOf(settingsManager.voiceGender) }
+                    Column {
+                        Text("Voice Gender Preference", fontSize = 13.sp, color = Color.LightGray)
+                        Spacer(modifier = Modifier.height(6.dp))
+                        Row(
+                            modifier = Modifier.fillMaxWidth(),
+                            horizontalArrangement = Arrangement.spacedBy(8.dp)
+                        ) {
+                            Button(
+                                onClick = {
+                                    voiceGender = "female"
+                                    settingsManager.voiceGender = "female"
+                                },
+                                colors = ButtonDefaults.buttonColors(
+                                    containerColor = if (voiceGender == "female") Color(0xFF00C853) else Color.DarkGray
+                                ),
+                                shape = RoundedCornerShape(8.dp),
+                                modifier = Modifier.weight(1f)
+                            ) {
+                                Text("Female", color = Color.White)
+                            }
+
+                            Button(
+                                onClick = {
+                                    voiceGender = "male"
+                                    settingsManager.voiceGender = "male"
+                                },
+                                colors = ButtonDefaults.buttonColors(
+                                    containerColor = if (voiceGender == "male") Color(0xFF00C853) else Color.DarkGray
+                                ),
+                                shape = RoundedCornerShape(8.dp),
+                                modifier = Modifier.weight(1f)
+                            ) {
+                                Text("Male", color = Color.White)
+                            }
+                        }
+                    }
                 }
             }
         }
@@ -287,6 +329,68 @@ fun SettingsScreen(
                                 onClick = {
                                     ocrSensitivity = 3000L
                                     settingsManager.ocrSensitivity = 3000L
+                                }
+                            )
+                        }
+                    }
+
+                    Divider(color = Color.White.copy(alpha = 0.08f))
+
+                    // OCR Scan Region
+                    Column {
+                        Row(
+                            modifier = Modifier.fillMaxWidth(),
+                            horizontalArrangement = Arrangement.SpaceBetween
+                        ) {
+                            Text("OCR Scan Region", fontSize = 13.sp, color = Color.LightGray)
+                            val regionText = when (ocrRegion) {
+                                "full" -> "Full Screen"
+                                "bottom_half" -> "Bottom Half"
+                                "bottom_third" -> "Bottom 1/3"
+                                "top_half" -> "Top Half"
+                                else -> "Full Screen"
+                            }
+                            Text(regionText, fontSize = 13.sp, fontWeight = FontWeight.Bold, color = Color(0xFF00C853))
+                        }
+                        Spacer(modifier = Modifier.height(4.dp))
+                        Row(
+                            modifier = Modifier.fillMaxWidth(),
+                            horizontalArrangement = Arrangement.spacedBy(8.dp)
+                        ) {
+                            LanguageChip(
+                                name = "Full Screen",
+                                code = "full",
+                                isSelected = ocrRegion == "full",
+                                onSelect = {
+                                    ocrRegion = "full"
+                                    settingsManager.ocrRegion = "full"
+                                }
+                            )
+                            LanguageChip(
+                                name = "1/2 Bottom",
+                                code = "bottom_half",
+                                isSelected = ocrRegion == "bottom_half",
+                                onSelect = {
+                                    ocrRegion = "bottom_half"
+                                    settingsManager.ocrRegion = "bottom_half"
+                                }
+                            )
+                            LanguageChip(
+                                name = "1/3 Bottom",
+                                code = "bottom_third",
+                                isSelected = ocrRegion == "bottom_third",
+                                onSelect = {
+                                    ocrRegion = "bottom_third"
+                                    settingsManager.ocrRegion = "bottom_third"
+                                }
+                            )
+                            LanguageChip(
+                                name = "Top Half",
+                                code = "top_half",
+                                isSelected = ocrRegion == "top_half",
+                                onSelect = {
+                                    ocrRegion = "top_half"
+                                    settingsManager.ocrRegion = "top_half"
                                 }
                             )
                         }

@@ -15,6 +15,7 @@ class SettingsManager(context: Context) {
         private const val KEY_OCR_SENSITIVITY = "ocr_sensitivity"
         private const val KEY_OCR_ENABLED = "ocr_enabled"
         private const val KEY_TRANSLATOR_ACTIVE = "translator_active"
+        private const val KEY_OCR_REGION = "ocr_region"
     }
 
     var targetLanguage: String
@@ -45,7 +46,48 @@ class SettingsManager(context: Context) {
         get() = prefs.getBoolean(KEY_OCR_ENABLED, true) // Enable by default as standard fallback
         set(value) = prefs.edit().putBoolean(KEY_OCR_ENABLED, value).apply()
 
+    var ocrRegion: String
+        get() = prefs.getString(KEY_OCR_REGION, "full") ?: "full"
+        set(value) = prefs.edit().putString(KEY_OCR_REGION, value).apply()
+
     var isTranslatorActive: Boolean
         get() = prefs.getBoolean(KEY_TRANSLATOR_ACTIVE, false)
         set(value) = prefs.edit().putBoolean(KEY_TRANSLATOR_ACTIVE, value).apply()
+
+    // Custom capture rectangle coordinates
+    var customRectLeft: Float
+        get() = prefs.getFloat("custom_rect_left", 0.05f)
+        set(value) = prefs.edit().putFloat("custom_rect_left", value).apply()
+
+    var customRectTop: Float
+        get() = prefs.getFloat("custom_rect_top", 0.70f)
+        set(value) = prefs.edit().putFloat("custom_rect_top", value).apply()
+
+    var customRectRight: Float
+        get() = prefs.getFloat("custom_rect_right", 0.95f)
+        set(value) = prefs.edit().putFloat("custom_rect_right", value).apply()
+
+    var customRectBottom: Float
+        get() = prefs.getFloat("custom_rect_bottom", 0.88f)
+        set(value) = prefs.edit().putFloat("custom_rect_bottom", value).apply()
+
+    // Independent Audio Modes (Mode A vs Mode B)
+    var audioMode: String // "mode_a" (Sound ON, Voice OFF) or "mode_b" (Sound MUTE, Voice ON)
+        get() = prefs.getString("audio_mode", "mode_b") ?: "mode_b"
+        set(value) = prefs.edit().putString("audio_mode", value).apply()
+
+    // Original Video Volume (system media stream volume)
+    var originalVideoVolume: Int
+        get() = prefs.getInt("original_video_volume", 10)
+        set(value) = prefs.edit().putInt("original_video_volume", value).apply()
+
+    // Translation Voice Volume (relative multiplier for TTS)
+    var translationVoiceVolume: Float
+        get() = prefs.getFloat("translation_voice_volume", 1.0f)
+        set(value) = prefs.edit().putFloat("translation_voice_volume", value).apply()
+
+    // TTS Voice Gender ("female" or "male")
+    var voiceGender: String
+        get() = prefs.getString("voice_gender", "female") ?: "female"
+        set(value) = prefs.edit().putString("voice_gender", value).apply()
 }
