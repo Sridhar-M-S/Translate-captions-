@@ -45,6 +45,10 @@ class SettingsManager(context: Context) {
         get() = prefs.getBoolean(KEY_OCR_ENABLED, true) // Enable by default as standard fallback
         set(value) = prefs.edit().putBoolean(KEY_OCR_ENABLED, value).apply()
 
+    var isOcrDebugVisible: Boolean
+        get() = prefs.getBoolean("ocr_debug_visible", true)
+        set(value) = prefs.edit().putBoolean("ocr_debug_visible", value).apply()
+
     var isTranslatorActive: Boolean
         get() = prefs.getBoolean(KEY_TRANSLATOR_ACTIVE, false)
         set(value) = prefs.edit().putBoolean(KEY_TRANSLATOR_ACTIVE, value).apply()

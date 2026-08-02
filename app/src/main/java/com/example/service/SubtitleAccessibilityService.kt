@@ -212,13 +212,26 @@ class SubtitleAccessibilityService : AccessibilityService() {
         isTranslatingState.value = true
         
         applyAudioSettings()
-        showSubtitleOverlay()
+        if (settingsManager.isOcrDebugVisible) {
+            showSubtitleOverlay()
+        }
         
         // Ensure OCR periodic scanning is started and running
         ocrHandler.removeCallbacks(ocrRunnable)
         ocrHandler.postDelayed(ocrRunnable, 500)
         
         Log.d("SubtitleService", "Translation Session Started and OCR scheduled")
+    }
+
+    private fun toggleOcrDebugVisibility(visible: Boolean) {
+        settingsManager.isOcrDebugVisible = visible
+        if (visible) {
+            if (settingsManager.isTranslatorActive) {
+                showSubtitleOverlay()
+            }
+        } else {
+            removeSubtitleOverlay()
+        }
     }
 
     private fun pauseTranslationSession() {
@@ -801,6 +814,10 @@ class SubtitleAccessibilityService : AccessibilityService() {
                             showSelectionOverlay()
                             removeMenuOverlay()
                         },
+                        onToggleOcrDebug = { visible ->
+                            toggleOcrDebugVisibility(visible)
+                        },
+                        ocrDebugVisible = settingsManager.isOcrDebugVisible,
                         onOriginalVolumeChanged = { newVol ->
                             settingsManager.originalVideoVolume = newVol
                             applyAudioSettings()
@@ -1288,6 +1305,8 @@ fun TranslationMenuPopupContent(
     onStopTranslation: () -> Unit,
     onSkip: () -> Unit,
     onSelectCaptionArea: () -> Unit,
+    onToggleOcrDebug: (Boolean) -> Unit,
+    ocrDebugVisible: Boolean,
     onOriginalVolumeChanged: (Int) -> Unit,
     onTranslationVolumeChanged: (Float) -> Unit,
     onClose: () -> Unit,
@@ -1428,6 +1447,36 @@ fun TranslationMenuPopupContent(
                     Icon(imageVector = Icons.Default.CropFree, contentDescription = "Crop", modifier = Modifier.size(16.dp))
                     Spacer(modifier = Modifier.width(8.dp))
                     Text("Custom Screen Selection", fontSize = 12.sp, fontWeight = FontWeight.Bold, color = Color.White)
+                }
+
+                // Show OCR Debug Pipeline Toggle
+                Row(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .clip(RoundedCornerShape(8.dp))
+                        .background(Color(0xFF2E2E3E))
+                        .padding(horizontal = 12.dp, vertical = 8.dp),
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Row(
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.spacedBy(8.dp)
+                    ) {
+                        Icon(imageVector = Icons.Default.Visibility, contentDescription = "OCR Pipeline", tint = Color(0xFF00C853), modifier = Modifier.size(16.dp))
+                        Text("Show OCR Pipeline", fontSize = 12.sp, fontWeight = FontWeight.Bold, color = Color.White)
+                    }
+                    Switch(
+                        checked = ocrDebugVisible,
+                        onCheckedChange = onToggleOcrDebug,
+                        colors = SwitchDefaults.colors(
+                            checkedThumbColor = Color.White,
+                            checkedTrackColor = Color(0xFF00C853),
+                            uncheckedThumbColor = Color.LightGray,
+                            uncheckedTrackColor = Color.DarkGray
+                        ),
+                        modifier = Modifier.testTag("ocr_debug_switch")
+                    )
                 }
 
                 HorizontalDivider(color = Color.White.copy(alpha = 0.08f))
