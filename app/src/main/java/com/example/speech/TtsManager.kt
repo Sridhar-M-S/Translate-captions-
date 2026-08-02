@@ -82,6 +82,7 @@ class TtsManager(private val context: Context) : TextToSpeech.OnInitListener {
                 "ta" -> Locale("ta", "IN")
                 "hi" -> Locale("hi", "IN")
                 "te" -> Locale("te", "IN")
+                "tanglish" -> Locale.US
                 else -> Locale(item.languageCode)
             }
             val langResult = tts?.setLanguage(locale)

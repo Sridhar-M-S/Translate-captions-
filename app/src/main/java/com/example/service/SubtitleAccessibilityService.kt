@@ -1553,72 +1553,99 @@ fun TranslationMenuPopupContent(
 
                 HorizontalDivider(color = Color.White.copy(alpha = 0.08f))
 
-                // Language selection
+                 // Language selection
                 Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
                     Text("Target Language", fontSize = 12.sp, color = Color.LightGray)
-                    Row(
-                        modifier = Modifier.fillMaxWidth(),
-                        horizontalArrangement = Arrangement.spacedBy(6.dp)
-                    ) {
-                        // Tamil
-                        Box(
-                            modifier = Modifier
-                                .background(
-                                    if (targetLanguage == "ta") Color(0xFF00C853).copy(alpha = 0.15f) else Color(0xFF2E2E3E),
-                                    RoundedCornerShape(6.dp)
-                                )
-                                .border(
-                                    1.dp,
-                                    if (targetLanguage == "ta") Color(0xFF00C853) else Color.Transparent,
-                                    RoundedCornerShape(6.dp)
-                                )
-                                .clickable {
-                                    targetLanguage = "ta"
-                                    settingsManager.targetLanguage = "ta"
-                                }
-                                .padding(horizontal = 8.dp, vertical = 6.dp)
+                    Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                        Row(
+                            modifier = Modifier.fillMaxWidth(),
+                            horizontalArrangement = Arrangement.spacedBy(6.dp)
                         ) {
-                            Text("Tamil", color = if (targetLanguage == "ta") Color(0xFF00C853) else Color.White, fontSize = 11.sp, fontWeight = FontWeight.Medium)
+                            // Tamil
+                            Box(
+                                modifier = Modifier
+                                    .background(
+                                        if (targetLanguage == "ta") Color(0xFF00C853).copy(alpha = 0.15f) else Color(0xFF2E2E3E),
+                                        RoundedCornerShape(6.dp)
+                                    )
+                                    .border(
+                                        1.dp,
+                                        if (targetLanguage == "ta") Color(0xFF00C853) else Color.Transparent,
+                                        RoundedCornerShape(6.dp)
+                                    )
+                                    .clickable {
+                                        targetLanguage = "ta"
+                                        settingsManager.targetLanguage = "ta"
+                                    }
+                                    .padding(horizontal = 8.dp, vertical = 6.dp)
+                            ) {
+                                Text("Tamil", color = if (targetLanguage == "ta") Color(0xFF00C853) else Color.White, fontSize = 11.sp, fontWeight = FontWeight.Medium)
+                            }
+                            // Tanglish
+                            Box(
+                                modifier = Modifier
+                                    .background(
+                                        if (targetLanguage == "tanglish") Color(0xFF00C853).copy(alpha = 0.15f) else Color(0xFF2E2E3E),
+                                        RoundedCornerShape(6.dp)
+                                    )
+                                    .border(
+                                        1.dp,
+                                        if (targetLanguage == "tanglish") Color(0xFF00C853) else Color.Transparent,
+                                        RoundedCornerShape(6.dp)
+                                    )
+                                    .clickable {
+                                        targetLanguage = "tanglish"
+                                        settingsManager.targetLanguage = "tanglish"
+                                    }
+                                    .padding(horizontal = 8.dp, vertical = 6.dp)
+                            ) {
+                                Text("Tanglish", color = if (targetLanguage == "tanglish") Color(0xFF00C853) else Color.White, fontSize = 11.sp, fontWeight = FontWeight.Medium)
+                            }
                         }
-                        // Hindi
-                        Box(
-                            modifier = Modifier
-                                .background(
-                                    if (targetLanguage == "hi") Color(0xFF00C853).copy(alpha = 0.15f) else Color(0xFF2E2E3E),
-                                    RoundedCornerShape(6.dp)
-                                )
-                                .border(
-                                    1.dp,
-                                    if (targetLanguage == "hi") Color(0xFF00C853) else Color.Transparent,
-                                    RoundedCornerShape(6.dp)
-                                )
-                                .clickable {
-                                    targetLanguage = "hi"
-                                    settingsManager.targetLanguage = "hi"
-                                }
-                                .padding(horizontal = 8.dp, vertical = 6.dp)
+                        Row(
+                            modifier = Modifier.fillMaxWidth(),
+                            horizontalArrangement = Arrangement.spacedBy(6.dp)
                         ) {
-                            Text("Hindi", color = if (targetLanguage == "hi") Color(0xFF00C853) else Color.White, fontSize = 11.sp, fontWeight = FontWeight.Medium)
-                        }
-                        // Telugu
-                        Box(
-                            modifier = Modifier
-                                .background(
-                                    if (targetLanguage == "te") Color(0xFF00C853).copy(alpha = 0.15f) else Color(0xFF2E2E3E),
-                                    RoundedCornerShape(6.dp)
-                                )
-                                .border(
-                                    1.dp,
-                                    if (targetLanguage == "te") Color(0xFF00C853) else Color.Transparent,
-                                    RoundedCornerShape(6.dp)
-                                )
-                                .clickable {
-                                    targetLanguage = "te"
-                                    settingsManager.targetLanguage = "te"
-                                }
-                                .padding(horizontal = 8.dp, vertical = 6.dp)
-                        ) {
-                            Text("Telugu", color = if (targetLanguage == "te") Color(0xFF00C853) else Color.White, fontSize = 11.sp, fontWeight = FontWeight.Medium)
+                            // Hindi
+                            Box(
+                                modifier = Modifier
+                                    .background(
+                                        if (targetLanguage == "hi") Color(0xFF00C853).copy(alpha = 0.15f) else Color(0xFF2E2E3E),
+                                        RoundedCornerShape(6.dp)
+                                    )
+                                    .border(
+                                        1.dp,
+                                        if (targetLanguage == "hi") Color(0xFF00C853) else Color.Transparent,
+                                        RoundedCornerShape(6.dp)
+                                    )
+                                    .clickable {
+                                        targetLanguage = "hi"
+                                        settingsManager.targetLanguage = "hi"
+                                    }
+                                    .padding(horizontal = 8.dp, vertical = 6.dp)
+                            ) {
+                                Text("Hindi", color = if (targetLanguage == "hi") Color(0xFF00C853) else Color.White, fontSize = 11.sp, fontWeight = FontWeight.Medium)
+                            }
+                            // Telugu
+                            Box(
+                                modifier = Modifier
+                                    .background(
+                                        if (targetLanguage == "te") Color(0xFF00C853).copy(alpha = 0.15f) else Color(0xFF2E2E3E),
+                                        RoundedCornerShape(6.dp)
+                                    )
+                                    .border(
+                                        1.dp,
+                                        if (targetLanguage == "te") Color(0xFF00C853) else Color.Transparent,
+                                        RoundedCornerShape(6.dp)
+                                    )
+                                    .clickable {
+                                        targetLanguage = "te"
+                                        settingsManager.targetLanguage = "te"
+                                    }
+                                    .padding(horizontal = 8.dp, vertical = 6.dp)
+                            ) {
+                                Text("Telugu", color = if (targetLanguage == "te") Color(0xFF00C853) else Color.White, fontSize = 11.sp, fontWeight = FontWeight.Medium)
+                            }
                         }
                     }
                 }

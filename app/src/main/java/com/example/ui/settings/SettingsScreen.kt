@@ -65,38 +65,54 @@ fun SettingsScreen(
                 }
                 Spacer(modifier = Modifier.height(4.dp))
                 
-                // Currently focused on Tamil but we can support others if requested
-                Row(
-                    modifier = Modifier.fillMaxWidth(),
-                    horizontalArrangement = Arrangement.spacedBy(8.dp)
-                ) {
-                    LanguageChip(
-                        name = "Tamil (Default)",
-                        code = "ta",
-                        isSelected = targetLanguage == "ta",
-                        onSelect = {
-                            targetLanguage = "ta"
-                            settingsManager.targetLanguage = "ta"
-                        }
-                    )
-                    LanguageChip(
-                        name = "Hindi",
-                        code = "hi",
-                        isSelected = targetLanguage == "hi",
-                        onSelect = {
-                            targetLanguage = "hi"
-                            settingsManager.targetLanguage = "hi"
-                        }
-                    )
-                    LanguageChip(
-                        name = "Telugu",
-                        code = "te",
-                        isSelected = targetLanguage == "te",
-                        onSelect = {
-                            targetLanguage = "te"
-                            settingsManager.targetLanguage = "te"
-                        }
-                    )
+                // Language selection options
+                Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.spacedBy(8.dp)
+                    ) {
+                        LanguageChip(
+                            name = "Tamil (Default)",
+                            code = "ta",
+                            isSelected = targetLanguage == "ta",
+                            onSelect = {
+                                targetLanguage = "ta"
+                                settingsManager.targetLanguage = "ta"
+                            }
+                        )
+                        LanguageChip(
+                            name = "Tanglish",
+                            code = "tanglish",
+                            isSelected = targetLanguage == "tanglish",
+                            onSelect = {
+                                targetLanguage = "tanglish"
+                                settingsManager.targetLanguage = "tanglish"
+                            }
+                        )
+                    }
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.spacedBy(8.dp)
+                    ) {
+                        LanguageChip(
+                            name = "Hindi",
+                            code = "hi",
+                            isSelected = targetLanguage == "hi",
+                            onSelect = {
+                                targetLanguage = "hi"
+                                settingsManager.targetLanguage = "hi"
+                            }
+                        )
+                        LanguageChip(
+                            name = "Telugu",
+                            code = "te",
+                            isSelected = targetLanguage == "te",
+                            onSelect = {
+                                targetLanguage = "te"
+                                settingsManager.targetLanguage = "te"
+                            }
+                        )
+                    }
                 }
             }
         }

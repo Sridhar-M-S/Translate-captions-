@@ -39,8 +39,9 @@ class TranslationService {
                 return@withContext TranslationResult.Success(text, "", "auto")
             }
 
+            val actualTargetLang = if (targetLanguage == "tanglish") "ta" else targetLanguage
             val encodedText = URLEncoder.encode(cleanedText, "UTF-8")
-            val url = "https://translate.googleapis.com/translate_a/single?client=gtx&sl=auto&tl=$targetLanguage&dt=t&q=$encodedText"
+            val url = "https://translate.googleapis.com/translate_a/single?client=gtx&sl=auto&tl=$actualTargetLang&dt=t&q=$encodedText"
 
             val request = Request.Builder()
                 .url(url)
@@ -107,6 +108,7 @@ class TranslationService {
                 "te" -> "Telugu"
                 "kn" -> "Kannada"
                 "ml" -> "Malayalam"
+                "tanglish" -> "Tanglish (Tamil + English). The translation should sound like how people in Tamil Nadu naturally speak in everyday conversation. Mix common English words naturally, use Roman letters (English alphabet), not Tamil script. Keep grammar natural instead of doing a word-for-word translation. Examples: 'Please wait for a moment.' -> 'Konjam wait pannunga.', 'The meeting will start in five minutes.' -> 'Innum 5 minutes la meeting start aagum.', 'Click the button and continue.' -> 'Button click pannitu continue pannunga.'"
                 else -> "Tamil"
             }
 
