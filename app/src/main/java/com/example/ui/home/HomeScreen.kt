@@ -5,12 +5,16 @@ import android.content.Context
 import android.content.Intent
 import android.net.Uri
 import android.provider.Settings
+import android.media.AudioManager
 import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.*
 import androidx.compose.material3.*
@@ -36,11 +40,21 @@ import com.example.service.SubtitleAccessibilityService
 fun HomeScreen(
     settingsManager: SettingsManager,
     isServiceRunning: Boolean,
-    onToggleService: (Boolean) -> Unit
+    onToggleService: (Boolean) -> Unit,
+    onStartSelection: () -> Unit,
+    onNavigateToSettings: () -> Unit
 ) {
     val context = LocalContext.current
     var hasAccessibilityPermission by remember { mutableStateOf(isAccessibilityServiceEnabled(context, SubtitleAccessibilityService::class.java)) }
     var hasOverlayPermission by remember { mutableStateOf(Settings.canDrawOverlays(context)) }
+
+    val audioManager = remember { context.getSystemService(Context.AUDIO_SERVICE) as AudioManager }
+    val maxMusicVolume = remember { audioManager.getStreamMaxVolume(AudioManager.STREAM_MUSIC) }
+    var origVolume by remember { mutableStateOf(settingsManager.originalVideoVolume) }
+    var transVolume by remember { mutableStateOf(settingsManager.translationVoiceVolume) }
+    var targetLanguage by remember { mutableStateOf(settingsManager.targetLanguage) }
+
+    val scrollState = rememberScrollState()
 
     // Automatically check and update permissions whenever the app returns to foreground
     val lifecycleOwner = LocalLifecycleOwner.current
@@ -66,6 +80,7 @@ fun HomeScreen(
     Column(
         modifier = Modifier
             .fillMaxSize()
+            .verticalScroll(scrollState)
             .padding(16.dp),
         horizontalAlignment = Alignment.CenterHorizontally,
         verticalArrangement = Arrangement.spacedBy(16.dp)
@@ -76,17 +91,17 @@ fun HomeScreen(
             colors = CardDefaults.cardColors(containerColor = Color(0xFF1E1E2E)),
             modifier = Modifier
                 .fillMaxWidth()
-                .padding(vertical = 8.dp)
+                .padding(vertical = 4.dp)
         ) {
             Column(
                 modifier = Modifier
-                    .padding(24.dp)
+                    .padding(20.dp)
                     .fillMaxWidth(),
                 horizontalAlignment = Alignment.CenterHorizontally
             ) {
                 Box(
                     modifier = Modifier
-                        .size(64.dp)
+                        .size(56.dp)
                         .background(Color(0xFF00C853).copy(alpha = 0.15f), CircleShape)
                         .border(1.dp, Color(0xFF00C853), CircleShape),
                     contentAlignment = Alignment.Center
@@ -95,10 +110,10 @@ fun HomeScreen(
                         imageVector = Icons.Default.Translate,
                         contentDescription = "Translate Logo",
                         tint = Color(0xFF00C853),
-                        modifier = Modifier.size(32.dp)
+                        modifier = Modifier.size(28.dp)
                     )
                 }
-                Spacer(modifier = Modifier.height(16.dp))
+                Spacer(modifier = Modifier.height(12.dp))
                 Text(
                     text = "Live Subtitle Translator",
                     fontWeight = FontWeight.Bold,
@@ -168,7 +183,7 @@ fun HomeScreen(
             }
         }
 
-        // Start/Stop Controller Card
+        // HOW TO USE / SHORTCUT SETUP CARD
         Card(
             shape = RoundedCornerShape(16.dp),
             colors = CardDefaults.cardColors(containerColor = Color(0xFF161622)),
@@ -176,86 +191,132 @@ fun HomeScreen(
         ) {
             Column(
                 modifier = Modifier.padding(16.dp),
-                horizontalAlignment = Alignment.CenterHorizontally
+                verticalArrangement = Arrangement.spacedBy(14.dp)
             ) {
                 Text(
-                    text = "Translator Status",
+                    text = "Shortcut Setup Instructions",
                     fontWeight = FontWeight.Bold,
                     fontSize = 15.sp,
-                    color = Color.White,
+                    color = Color(0xFF00C853),
                     modifier = Modifier.fillMaxWidth()
                 )
-                Spacer(modifier = Modifier.height(16.dp))
 
-                val isReady = hasAccessibilityPermission && hasOverlayPermission
+                Column(
+                    verticalArrangement = Arrangement.spacedBy(10.dp)
+                ) {
+                    InstructionStep(
+                        number = "1",
+                        title = "Grant Required Permissions",
+                        description = "Enable 'Accessibility Service' and 'Display Over Other Apps' permissions above."
+                    )
+                    
+                    InstructionStep(
+                        number = "2",
+                        title = "Enable Accessibility Shortcut",
+                        description = "Go to system Accessibility settings for this service, and turn on the Shortcut option. Android will place a floating shortcut icon on your screen."
+                    )
+                    
+                    InstructionStep(
+                        number = "3",
+                        title = "Launch Translation Menu",
+                        description = "Tap Android's floating shortcut icon anytime to show/hide the floating Translation Menu popup."
+                    )
 
-                if (isServiceRunning) {
-                    // Running state
-                    Button(
-                        onClick = { onToggleService(false) },
-                        colors = ButtonDefaults.buttonColors(containerColor = Color.Red),
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .height(56.dp)
-                            .testTag("stop_service_button"),
-                        shape = RoundedCornerShape(12.dp)
-                    ) {
-                        Icon(imageVector = Icons.Default.Stop, contentDescription = "Stop")
-                        Spacer(modifier = Modifier.width(8.dp))
-                        Text("Stop Translator Session", fontSize = 16.sp, fontWeight = FontWeight.Bold)
-                    }
-                } else {
-                    // Stopped state
-                    Button(
-                        onClick = { onToggleService(true) },
-                        colors = ButtonDefaults.buttonColors(
-                            containerColor = if (isReady) Color(0xFF00C853) else Color.Gray
-                        ),
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .height(56.dp)
-                            .testTag("start_service_button"),
-                        shape = RoundedCornerShape(12.dp),
-                        enabled = isReady
-                    ) {
-                        Icon(imageVector = Icons.Default.PlayArrow, contentDescription = "Start")
-                        Spacer(modifier = Modifier.width(8.dp))
-                        Text("Start Translation Service", fontSize = 16.sp, fontWeight = FontWeight.Bold)
-                    }
-                }
-
-                Spacer(modifier = Modifier.height(12.dp))
-
-                AnimatedVisibility(visible = !isReady) {
-                    Text(
-                        text = "⚠️ Please grant both permissions above to start.",
-                        color = Color(0xFFFFB300),
-                        fontSize = 12.sp,
-                        fontWeight = FontWeight.Medium,
-                        textAlign = TextAlign.Center
+                    InstructionStep(
+                        number = "4",
+                        title = "Select & Translate",
+                        description = "Within the popup, click 'Start' to begin live OCR and translation, or 'Custom Screen Selection' to crop a specific video area."
                     )
                 }
 
-                AnimatedVisibility(visible = isReady && !isServiceRunning) {
-                    Text(
-                        text = "Ready! Tap to start. A floating bar will appear to show subtitles.",
-                        color = Color.Gray,
-                        fontSize = 12.sp,
-                        textAlign = TextAlign.Center
-                    )
-                }
+                Divider(color = Color.White.copy(alpha = 0.08f))
 
-                AnimatedVisibility(visible = isServiceRunning) {
-                    Text(
-                        text = "Active! Open YouTube, Netflix, or any browser to see live translations.",
-                        color = Color(0xFF00C853),
-                        fontSize = 12.sp,
-                        fontWeight = FontWeight.Medium,
-                        textAlign = TextAlign.Center
-                    )
+                Button(
+                    onClick = onNavigateToSettings,
+                    colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF252538)),
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .height(44.dp)
+                        .testTag("navigate_to_settings_button"),
+                    shape = RoundedCornerShape(8.dp)
+                ) {
+                    Icon(imageVector = Icons.Default.Settings, contentDescription = "Settings", tint = Color(0xFF00C853), modifier = Modifier.size(18.dp))
+                    Spacer(modifier = Modifier.width(8.dp))
+                    Text("Configure Advanced Speech & OCR", fontSize = 13.sp, fontWeight = FontWeight.SemiBold, color = Color.White)
                 }
             }
         }
+    }
+}
+
+@Composable
+fun InstructionStep(
+    number: String,
+    title: String,
+    description: String
+) {
+    Row(
+        modifier = Modifier.fillMaxWidth(),
+        horizontalArrangement = Arrangement.spacedBy(12.dp),
+        verticalAlignment = Alignment.Top
+    ) {
+        Box(
+            modifier = Modifier
+                .size(24.dp)
+                .background(Color(0xFF00C853).copy(alpha = 0.15f), CircleShape)
+                .border(1.dp, Color(0xFF00C853), CircleShape),
+            contentAlignment = Alignment.Center
+        ) {
+            Text(
+                text = number,
+                color = Color(0xFF00C853),
+                fontSize = 12.sp,
+                fontWeight = FontWeight.Bold
+            )
+        }
+        Column(modifier = Modifier.weight(1f)) {
+            Text(
+                text = title,
+                color = Color.White,
+                fontSize = 13.sp,
+                fontWeight = FontWeight.Bold
+            )
+            Text(
+                text = description,
+                color = Color.Gray,
+                fontSize = 12.sp
+            )
+        }
+    }
+}
+
+@Composable
+fun LanguageChip(
+    name: String,
+    code: String,
+    isSelected: Boolean,
+    onSelect: () -> Unit
+) {
+    Box(
+        modifier = Modifier
+            .background(
+                if (isSelected) Color(0xFF00C853).copy(alpha = 0.15f) else Color(0xFF2E2E3E),
+                RoundedCornerShape(8.dp)
+            )
+            .border(
+                1.dp,
+                if (isSelected) Color(0xFF00C853) else Color.Transparent,
+                RoundedCornerShape(8.dp)
+            )
+            .clickable { onSelect() }
+            .padding(horizontal = 12.dp, vertical = 6.dp)
+    ) {
+        Text(
+            text = name,
+            color = if (isSelected) Color(0xFF00C853) else Color.White,
+            fontSize = 12.sp,
+            fontWeight = if (isSelected) FontWeight.Bold else FontWeight.Normal
+        )
     }
 }
 

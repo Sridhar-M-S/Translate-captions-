@@ -136,6 +136,15 @@ class MainActivity : ComponentActivity() {
                                         context.startService(intent)
                                         isServiceRunning = false
                                     }
+                                },
+                                onStartSelection = {
+                                    val intent = Intent(context, SubtitleAccessibilityService::class.java).apply {
+                                        action = "SELECT_REGION"
+                                    }
+                                    context.startService(intent)
+                                },
+                                onNavigateToSettings = {
+                                    currentScreen = Screen.Settings
                                 }
                             )
                             Screen.LiveTranslator -> LiveTranslatorScreen(

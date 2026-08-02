@@ -23,6 +23,7 @@ import android.media.AudioManager
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.gestures.detectDragGestures
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.shape.CircleShape
@@ -92,13 +93,14 @@ class SubtitleAccessibilityService : AccessibilityService() {
     private var lastSubtitleText = ""
     private var lastTranslatedText = ""
     private var detectedLanguage = "en"
+    private var emptyOcrFramesCounter = 0
 
     private var windowManager: WindowManager? = null
 
-    // Floating overlay views
-    private var overlayView: FrameLayout? = null
-    private var overlayParams: WindowManager.LayoutParams? = null
+    // Subtitle and selection overlay views
+    private var subtitleOverlayView: FrameLayout? = null
     private var selectionOverlayView: FrameLayout? = null
+    private var menuOverlayView: FrameLayout? = null
 
     // State flows for compose overlay
     private val subtitleState = MutableStateFlow("")
@@ -133,8 +135,14 @@ class SubtitleAccessibilityService : AccessibilityService() {
             // Sync initial state
             isTranslatingState.value = settingsManager.isTranslatorActive
             
-            // Show initial floating overlay (will be collapsed or expanded depending on state)
-            showFloatingOverlay()
+            // Register shared preference change listener
+            val prefs = getSharedPreferences("subtitle_translator_prefs", Context.MODE_PRIVATE)
+            prefs.registerOnSharedPreferenceChangeListener(prefListener)
+            
+            // Show subtitle overlay if already active
+            if (isTranslatingState.value) {
+                showSubtitleOverlay()
+            }
             
             // Apply initial audio settings
             applyAudioSettings()
@@ -143,10 +151,36 @@ class SubtitleAccessibilityService : AccessibilityService() {
         }
     }
 
+    private val prefListener = android.content.SharedPreferences.OnSharedPreferenceChangeListener { _, key ->
+        if (key == "original_video_volume" || key == "is_voice_enabled") {
+            applyAudioSettings()
+        }
+    }
+
     override fun onServiceConnected() {
         try {
             super.onServiceConnected()
             Log.d("SubtitleService", "Service Connected")
+            
+            val info = serviceInfo
+            info.flags = info.flags or android.accessibilityservice.AccessibilityServiceInfo.FLAG_REQUEST_ACCESSIBILITY_BUTTON
+            serviceInfo = info
+
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+                try {
+                    accessibilityButtonController.registerAccessibilityButtonCallback(
+                        object : android.accessibilityservice.AccessibilityButtonController.AccessibilityButtonCallback() {
+                            override fun onClicked(controller: android.accessibilityservice.AccessibilityButtonController?) {
+                                Log.d("SubtitleService", "Accessibility Button Clicked (Controller Callback)")
+                                toggleMenuOverlay()
+                            }
+                        }
+                    )
+                } catch (e: Exception) {
+                    Log.e("SubtitleService", "Error registering accessibility button callback", e)
+                }
+            }
+
             if (settingsManager.isTranslatorActive) {
                 startTranslationSession()
             }
@@ -159,10 +193,11 @@ class SubtitleAccessibilityService : AccessibilityService() {
         try {
             intent?.let {
                 val action = it.action
-                if (action == "START") {
-                    startTranslationSession()
-                } else if (action == "STOP") {
-                    stopTranslationSession()
+                Log.d("SubtitleService", "onStartCommand with action: $action")
+                when (action) {
+                    "START" -> startTranslationSession()
+                    "STOP" -> stopTranslationSession()
+                    "SELECT_REGION" -> showSelectionOverlay()
                 }
             }
         } catch (e: Exception) {
@@ -172,18 +207,17 @@ class SubtitleAccessibilityService : AccessibilityService() {
     }
 
     private fun startTranslationSession() {
-        if (isTranslatingState.value) return
         settingsManager.isTranslatorActive = true
         isTranslatingState.value = true
         
         applyAudioSettings()
-        showFloatingOverlay()
+        showSubtitleOverlay()
         
-        // Start OCR periodic scanning unconditionally
+        // Ensure OCR periodic scanning is started and running
         ocrHandler.removeCallbacks(ocrRunnable)
         ocrHandler.postDelayed(ocrRunnable, 500)
         
-        Log.d("SubtitleService", "Translation Session Started")
+        Log.d("SubtitleService", "Translation Session Started and OCR scheduled")
     }
 
     private fun pauseTranslationSession() {
@@ -203,7 +237,7 @@ class SubtitleAccessibilityService : AccessibilityService() {
         
         ocrHandler.removeCallbacks(ocrRunnable)
         ttsManager.stop()
-        removeFloatingOverlay()
+        removeSubtitleOverlay()
 
         // Unmute original audio on stop to half of maximum volume
         try {
@@ -333,10 +367,20 @@ class SubtitleAccessibilityService : AccessibilityService() {
                         Log.d("SubtitleService", "OCR raw detected text: '$combinedText'")
                         
                         if (combinedText.isNotEmpty()) {
-                            if (combinedText.length in 3..200) {
+                            emptyOcrFramesCounter = 0 // Reset empty frames counter
+                            if (combinedText.length in 1..1000) {
                                 processNewSubtitle(combinedText)
                             } else {
                                 Log.d("SubtitleService", "Detected text ignored due to length constraints (${combinedText.length} chars)")
+                            }
+                        } else {
+                            // Increment consecutive empty frames counter
+                            emptyOcrFramesCounter++
+                            if (emptyOcrFramesCounter >= 2) {
+                                // Subtitle is officially gone from screen, clear the states
+                                subtitleState.value = ""
+                                translationState.value = ""
+                                lastSubtitleText = ""
                             }
                         }
                     } catch (e: Exception) {
@@ -386,12 +430,13 @@ class SubtitleAccessibilityService : AccessibilityService() {
                         Log.e("SubtitleService", "Failed to save history to Room", e)
                     }
 
-                    // TTS speak in Tamil (or target lang) if translation voice is enabled and not muted
+                    // TTS speak in target language if translation voice is enabled and not muted
                     val isVoiceOn = settingsManager.isVoiceEnabled && !isMutedState.value
                     if (isVoiceOn) {
                         try {
                             ttsManager.speak(
                                 result.translatedText,
+                                languageCode = targetLang,
                                 speed = settingsManager.speechSpeed,
                                 pitch = settingsManager.speechPitch,
                                 gender = settingsManager.voiceGender,
@@ -414,6 +459,12 @@ class SubtitleAccessibilityService : AccessibilityService() {
             // Set STREAM_MUSIC (original video volume) strictly to user's chosen value from the slider
             val vol = settingsManager.originalVideoVolume
             audioManager.setStreamVolume(AudioManager.STREAM_MUSIC, vol, 0)
+            
+            // Set STREAM_ACCESSIBILITY (translation voice volume) independently
+            val transVol = settingsManager.translationVoiceVolume
+            val maxAccessVol = audioManager.getStreamMaxVolume(AudioManager.STREAM_ACCESSIBILITY)
+            val targetAccessVol = (transVol * maxAccessVol).toInt().coerceIn(0, maxAccessVol)
+            audioManager.setStreamVolume(AudioManager.STREAM_ACCESSIBILITY, targetAccessVol, 0)
             
             val isVoiceOn = settingsManager.isVoiceEnabled && isTranslatingState.value && !isMutedState.value
             if (!isVoiceOn) {
@@ -455,28 +506,24 @@ class SubtitleAccessibilityService : AccessibilityService() {
         return dp[s2.length]
     }
 
-    private fun showFloatingOverlay() {
-        if (overlayView != null) return
+    private fun showSubtitleOverlay() {
+        if (subtitleOverlayView != null) return
         if (!android.provider.Settings.canDrawOverlays(this)) return
 
         try {
             val params = WindowManager.LayoutParams(
-                WindowManager.LayoutParams.WRAP_CONTENT,
+                WindowManager.LayoutParams.MATCH_PARENT,
                 WindowManager.LayoutParams.WRAP_CONTENT,
                 if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) 
                     WindowManager.LayoutParams.TYPE_APPLICATION_OVERLAY 
                 else 
                     WindowManager.LayoutParams.TYPE_PHONE,
-                WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE or WindowManager.LayoutParams.FLAG_LAYOUT_IN_SCREEN,
+                WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE or WindowManager.LayoutParams.FLAG_NOT_TOUCHABLE or WindowManager.LayoutParams.FLAG_LAYOUT_IN_SCREEN,
                 PixelFormat.TRANSLUCENT
             ).apply {
-                gravity = Gravity.TOP or Gravity.START
-                val displayMetrics = resources.displayMetrics
-                x = (displayMetrics.widthPixels - 340) / 2
-                y = displayMetrics.heightPixels - 700
+                gravity = Gravity.BOTTOM or Gravity.CENTER_HORIZONTAL
+                y = 100
             }
-
-            overlayParams = params
 
             val lifecycleOwner = ServiceLifecycleOwner().apply {
                 performRestore(null)
@@ -485,56 +532,15 @@ class SubtitleAccessibilityService : AccessibilityService() {
                 handleLifecycleEvent(Lifecycle.Event.ON_RESUME)
             }
 
-            val audioManager = getSystemService(Context.AUDIO_SERVICE) as AudioManager
-            val maxMusicVolume = audioManager.getStreamMaxVolume(AudioManager.STREAM_MUSIC)
-            val currentMusicVolume = audioManager.getStreamVolume(AudioManager.STREAM_MUSIC)
-
             val composeView = ComposeView(this).apply {
                 setViewTreeLifecycleOwner(lifecycleOwner)
                 setViewTreeViewModelStoreOwner(lifecycleOwner)
                 setViewTreeSavedStateRegistryOwner(lifecycleOwner)
                 setContent {
-                    FloatingOverlayContent(
+                    SubtitleOverlayContent(
                         subtitleFlow = subtitleState,
                         translationFlow = translationState,
-                        isTranslatingFlow = isTranslatingState,
-                        isMutedFlow = isMutedState,
-                        settingsManager = settingsManager,
-                        onToggleMute = { 
-                            isMutedState.value = !isMutedState.value 
-                            applyAudioSettings()
-                        },
-                        onStartTranslation = { startTranslationSession() },
-                        onPauseTranslation = { pauseTranslationSession() },
-                        onStop = { stopTranslationSession() },
-                        onDrag = { dx, dy ->
-                            params.x += dx
-                            params.y += dy
-                            try {
-                                windowManager?.updateViewLayout(overlayView, params)
-                            } catch (e: Exception) {
-                                Log.e("SubtitleService", "Error updating overlay layout", e)
-                            }
-                        },
-                        onSelectCaptionArea = {
-                            showSelectionOverlay()
-                        },
-                        onOpenSettings = {
-                            try {
-                                val intent = Intent(this@SubtitleAccessibilityService, MainActivity::class.java).apply {
-                                    flags = Intent.FLAG_ACTIVITY_NEW_TASK
-                                }
-                                startActivity(intent)
-                            } catch (e: Exception) {
-                                Log.e("SubtitleService", "Error opening settings screen", e)
-                            }
-                        },
-                        maxMusicVolume = maxMusicVolume,
-                        currentMusicVolume = currentMusicVolume,
-                        onOriginalVolumeChanged = { newVol ->
-                            settingsManager.originalVideoVolume = newVol
-                            applyAudioSettings()
-                        }
+                        isTranslatingFlow = isTranslatingState
                     )
                 }
             }
@@ -546,22 +552,22 @@ class SubtitleAccessibilityService : AccessibilityService() {
                 addView(composeView)
             }
 
-            overlayView = parentLayout
+            subtitleOverlayView = parentLayout
             windowManager?.addView(parentLayout, params)
         } catch (e: Exception) {
-            Log.e("SubtitleService", "Error showing floating overlay", e)
-            overlayView = null
+            Log.e("SubtitleService", "Error showing subtitle overlay", e)
+            subtitleOverlayView = null
         }
     }
 
-    private fun removeFloatingOverlay() {
-        overlayView?.let {
+    private fun removeSubtitleOverlay() {
+        subtitleOverlayView?.let {
             try {
                 windowManager?.removeView(it)
             } catch (e: Exception) {
-                Log.e("SubtitleService", "Error removing floating overlay", e)
+                Log.e("SubtitleService", "Error removing subtitle overlay", e)
             }
-            overlayView = null
+            subtitleOverlayView = null
         }
     }
 
@@ -569,7 +575,7 @@ class SubtitleAccessibilityService : AccessibilityService() {
         if (selectionOverlayView != null) return
         if (!android.provider.Settings.canDrawOverlays(this)) return
 
-        removeFloatingOverlay()
+        removeSubtitleOverlay()
 
         try {
             val params = WindowManager.LayoutParams(
@@ -604,11 +610,15 @@ class SubtitleAccessibilityService : AccessibilityService() {
                             settingsManager.customRectBottom = b
                             
                             removeSelectionOverlay()
-                            showFloatingOverlay()
+                            if (isTranslatingState.value) {
+                                showSubtitleOverlay()
+                            }
                         },
                         onCancel = {
                             removeSelectionOverlay()
-                            showFloatingOverlay()
+                            if (isTranslatingState.value) {
+                                showSubtitleOverlay()
+                            }
                         }
                     )
                 }
@@ -626,7 +636,9 @@ class SubtitleAccessibilityService : AccessibilityService() {
         } catch (e: Exception) {
             Log.e("SubtitleService", "Error showing selection overlay", e)
             selectionOverlayView = null
-            showFloatingOverlay()
+            if (isTranslatingState.value) {
+                showSubtitleOverlay()
+            }
         }
     }
 
@@ -641,6 +653,115 @@ class SubtitleAccessibilityService : AccessibilityService() {
         }
     }
 
+    private fun toggleMenuOverlay() {
+        if (menuOverlayView != null) {
+            removeMenuOverlay()
+        } else {
+            showMenuOverlay()
+        }
+    }
+
+    private fun showMenuOverlay() {
+        if (menuOverlayView != null) return
+        if (!android.provider.Settings.canDrawOverlays(this)) return
+
+        try {
+            val params = WindowManager.LayoutParams(
+                WindowManager.LayoutParams.MATCH_PARENT,
+                WindowManager.LayoutParams.MATCH_PARENT,
+                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) 
+                    WindowManager.LayoutParams.TYPE_APPLICATION_OVERLAY 
+                else 
+                    WindowManager.LayoutParams.TYPE_PHONE,
+                WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE or WindowManager.LayoutParams.FLAG_LAYOUT_IN_SCREEN,
+                PixelFormat.TRANSLUCENT
+            )
+
+            val lifecycleOwner = ServiceLifecycleOwner().apply {
+                performRestore(null)
+                handleLifecycleEvent(Lifecycle.Event.ON_CREATE)
+                handleLifecycleEvent(Lifecycle.Event.ON_START)
+                handleLifecycleEvent(Lifecycle.Event.ON_RESUME)
+            }
+
+            val audioManager = getSystemService(Context.AUDIO_SERVICE) as AudioManager
+            val maxMusicVolume = audioManager.getStreamMaxVolume(AudioManager.STREAM_MUSIC)
+            val currentMusicVolume = audioManager.getStreamVolume(AudioManager.STREAM_MUSIC)
+
+            val composeView = ComposeView(this).apply {
+                setViewTreeLifecycleOwner(lifecycleOwner)
+                setViewTreeViewModelStoreOwner(lifecycleOwner)
+                setViewTreeSavedStateRegistryOwner(lifecycleOwner)
+                setContent {
+                    TranslationMenuPopupContent(
+                        isTranslatingFlow = isTranslatingState,
+                        settingsManager = settingsManager,
+                        maxMusicVolume = maxMusicVolume,
+                        currentMusicVolume = currentMusicVolume,
+                        onStartTranslation = {
+                            startTranslationSession()
+                            removeMenuOverlay()
+                        },
+                        onStopTranslation = {
+                            stopTranslationSession()
+                            removeMenuOverlay()
+                        },
+                        onSelectCaptionArea = {
+                            showSelectionOverlay()
+                            removeMenuOverlay()
+                        },
+                        onOriginalVolumeChanged = { newVol ->
+                            settingsManager.originalVideoVolume = newVol
+                            applyAudioSettings()
+                        },
+                        onTranslationVolumeChanged = { newVol ->
+                            settingsManager.translationVoiceVolume = newVol
+                            applyAudioSettings()
+                        },
+                        onClose = {
+                            removeMenuOverlay()
+                        },
+                        onOpenSettings = {
+                            try {
+                                val intent = Intent(this@SubtitleAccessibilityService, MainActivity::class.java).apply {
+                                    flags = Intent.FLAG_ACTIVITY_NEW_TASK
+                                }
+                                startActivity(intent)
+                                removeMenuOverlay()
+                            } catch (e: Exception) {
+                                Log.e("SubtitleService", "Error opening settings screen", e)
+                            }
+                        }
+                    )
+                }
+            }
+
+            val parentLayout = FrameLayout(this).apply {
+                setViewTreeLifecycleOwner(lifecycleOwner)
+                setViewTreeViewModelStoreOwner(lifecycleOwner)
+                setViewTreeSavedStateRegistryOwner(lifecycleOwner)
+                addView(composeView)
+            }
+
+            menuOverlayView = parentLayout
+            windowManager?.addView(parentLayout, params)
+        } catch (e: Exception) {
+            Log.e("SubtitleService", "Error showing menu overlay", e)
+            menuOverlayView = null
+        }
+    }
+
+    private fun removeMenuOverlay() {
+        menuOverlayView?.let {
+            try {
+                windowManager?.removeView(it)
+            } catch (e: Exception) {
+                Log.e("SubtitleService", "Error removing menu overlay", e)
+            }
+            menuOverlayView = null
+        }
+    }
+
     override fun onInterrupt() {}
 
     override fun onDestroy() {
@@ -649,8 +770,9 @@ class SubtitleAccessibilityService : AccessibilityService() {
             serviceScope.cancel()
             ttsManager.shutdown()
             textRecognizer?.close()
-            removeFloatingOverlay()
+            removeSubtitleOverlay()
             removeSelectionOverlay()
+            removeMenuOverlay()
 
             // Restore original audio on destroy
             val audioManager = getSystemService(Context.AUDIO_SERVICE) as AudioManager
@@ -881,342 +1003,354 @@ fun CaptionAreaSelectionScreen(
 }
 
 /**
- * The Floating Subtitle overlay Composable with Draggability and Integrated Settings Menu
+ * Clean, translucent click-through subtitle overlay displaying original and translated texts
  */
 @Composable
-fun FloatingOverlayContent(
+fun SubtitleOverlayContent(
     subtitleFlow: StateFlow<String>,
     translationFlow: StateFlow<String>,
-    isTranslatingFlow: StateFlow<Boolean>,
-    isMutedFlow: StateFlow<Boolean>,
-    settingsManager: SettingsManager,
-    onToggleMute: () -> Unit,
-    onStartTranslation: () -> Unit,
-    onPauseTranslation: () -> Unit,
-    onStop: () -> Unit,
-    onDrag: (dx: Int, dy: Int) -> Unit,
-    onSelectCaptionArea: () -> Unit,
-    onOpenSettings: () -> Unit,
-    maxMusicVolume: Int,
-    currentMusicVolume: Int,
-    onOriginalVolumeChanged: (Int) -> Unit
+    isTranslatingFlow: StateFlow<Boolean>
 ) {
     val subtitle by subtitleFlow.collectAsState()
     val translation by translationFlow.collectAsState()
     val isTranslating by isTranslatingFlow.collectAsState()
-    val isMuted by isMutedFlow.collectAsState()
-    
-    var isMenuOpen by remember { mutableStateOf(false) }
-    
-    var origVolume by remember { mutableStateOf(currentMusicVolume) }
-    var transVolume by remember { mutableStateOf(settingsManager.translationVoiceVolume) }
 
-    Column(
-        modifier = Modifier.wrapContentSize(),
-        horizontalAlignment = Alignment.CenterHorizontally
-    ) {
-        if (isMenuOpen) {
-            // Popup Menu Card right above the button
+    if (isTranslating && (subtitle.isNotEmpty() || translation.isNotEmpty())) {
+        Box(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(horizontal = 24.dp, vertical = 8.dp),
+            contentAlignment = Alignment.Center
+        ) {
             Card(
                 shape = RoundedCornerShape(12.dp),
                 colors = CardDefaults.cardColors(
-                    containerColor = Color(0xFF12121E).copy(alpha = 0.95f)
+                    containerColor = Color.Black.copy(alpha = 0.75f)
                 ),
-                elevation = CardDefaults.cardElevation(defaultElevation = 8.dp),
+                border = BorderStroke(1.5.dp, Color(0xFF00C853).copy(alpha = 0.6f)),
                 modifier = Modifier
-                    .width(280.dp)
-                    .padding(bottom = 8.dp)
-                    .shadow(6.dp, RoundedCornerShape(12.dp))
-                    .testTag("floating_popup_menu")
+                    .wrapContentWidth()
+                    .padding(8.dp)
             ) {
                 Column(
-                    modifier = Modifier.padding(12.dp),
-                    verticalArrangement = Arrangement.spacedBy(8.dp)
-                ) {
-                    Text(
-                        text = "Translator Menu",
-                        fontSize = 14.sp,
-                        fontWeight = FontWeight.Bold,
-                        color = Color(0xFF00C853),
-                        modifier = Modifier.padding(bottom = 4.dp)
-                    )
-
-                    // 1. Start Translation
-                    Row(
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .clip(RoundedCornerShape(6.dp))
-                            .clickable {
-                                onStartTranslation()
-                                isMenuOpen = false
-                            }
-                            .background(if (isTranslating) Color(0xFF00C853).copy(alpha = 0.15f) else Color.Transparent)
-                            .padding(8.dp),
-                        verticalAlignment = Alignment.CenterVertically
-                    ) {
-                        Icon(
-                            imageVector = Icons.Default.PlayArrow,
-                            contentDescription = "Start Translation",
-                            tint = if (isTranslating) Color(0xFF00C853) else Color.White,
-                            modifier = Modifier.size(18.dp)
-                        )
-                        Spacer(modifier = Modifier.width(8.dp))
-                        Text(
-                            text = "Start Translation",
-                            color = if (isTranslating) Color(0xFF00C853) else Color.White,
-                            fontSize = 13.sp,
-                            fontWeight = FontWeight.Medium
-                        )
-                    }
-
-                    // 2. Pause Translation
-                    Row(
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .clip(RoundedCornerShape(6.dp))
-                            .clickable {
-                                onPauseTranslation()
-                                isMenuOpen = false
-                            }
-                            .background(if (!isTranslating && settingsManager.isTranslatorActive) Color.Yellow.copy(alpha = 0.15f) else Color.Transparent)
-                            .padding(8.dp),
-                        verticalAlignment = Alignment.CenterVertically
-                    ) {
-                        Icon(
-                            imageVector = Icons.Default.Pause,
-                            contentDescription = "Pause Translation",
-                            tint = Color.White,
-                            modifier = Modifier.size(18.dp)
-                        )
-                        Spacer(modifier = Modifier.width(8.dp))
-                        Text(
-                            text = "Pause Translation",
-                            color = Color.White,
-                            fontSize = 13.sp,
-                            fontWeight = FontWeight.Medium
-                        )
-                    }
-
-                    // 3. Stop Translation
-                    Row(
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .clip(RoundedCornerShape(6.dp))
-                            .clickable {
-                                onStop()
-                                isMenuOpen = false
-                            }
-                            .padding(8.dp),
-                        verticalAlignment = Alignment.CenterVertically
-                    ) {
-                        Icon(
-                            imageVector = Icons.Default.Stop,
-                            contentDescription = "Stop Translation",
-                            tint = Color.Red,
-                            modifier = Modifier.size(18.dp)
-                        )
-                        Spacer(modifier = Modifier.width(8.dp))
-                        Text(
-                            text = "Stop Translation",
-                            color = Color.Red,
-                            fontSize = 13.sp,
-                            fontWeight = FontWeight.Medium
-                        )
-                    }
-
-                    // 4. Custom Screen Selection
-                    Row(
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .clip(RoundedCornerShape(6.dp))
-                            .clickable {
-                                onSelectCaptionArea()
-                                isMenuOpen = false
-                            }
-                            .padding(8.dp),
-                        verticalAlignment = Alignment.CenterVertically
-                    ) {
-                        Icon(
-                            imageVector = Icons.Default.CropFree,
-                            contentDescription = "Custom Screen Selection",
-                            tint = Color.White,
-                            modifier = Modifier.size(18.dp)
-                        )
-                        Spacer(modifier = Modifier.width(8.dp))
-                        Text(
-                            text = "Custom Screen Selection",
-                            color = Color.White,
-                            fontSize = 13.sp,
-                            fontWeight = FontWeight.Medium
-                        )
-                    }
-
-                    HorizontalDivider(color = Color.White.copy(alpha = 0.1f))
-
-                    // 5. Original Video Volume Slider
-                    Column(verticalArrangement = Arrangement.spacedBy(2.dp)) {
-                        Row(
-                            modifier = Modifier.fillMaxWidth(),
-                            horizontalArrangement = Arrangement.SpaceBetween,
-                            verticalAlignment = Alignment.CenterVertically
-                        ) {
-                            Text("🔊 Original Video Volume", fontSize = 11.sp, color = Color.LightGray)
-                            Text(origVolume.toString(), fontSize = 11.sp, color = Color.White, fontWeight = FontWeight.Bold)
-                        }
-                        Slider(
-                            value = origVolume.toFloat(),
-                            onValueChange = {
-                                val newVol = it.toInt()
-                                origVolume = newVol
-                                onOriginalVolumeChanged(newVol)
-                            },
-                            valueRange = 0f..maxMusicVolume.toFloat(),
-                            modifier = Modifier.height(24.dp),
-                            colors = SliderDefaults.colors(
-                                activeTrackColor = Color(0xFF00C853),
-                                inactiveTrackColor = Color.DarkGray,
-                                thumbColor = Color(0xFF00C853)
-                            )
-                        )
-                    }
-
-                    // 6. Translation Voice Volume Slider
-                    Column(verticalArrangement = Arrangement.spacedBy(2.dp)) {
-                        Row(
-                            modifier = Modifier.fillMaxWidth(),
-                            horizontalArrangement = Arrangement.SpaceBetween,
-                            verticalAlignment = Alignment.CenterVertically
-                        ) {
-                            Text("🗣 Translation Voice Volume", fontSize = 11.sp, color = Color.LightGray)
-                            Text("${(transVolume * 100).toInt()}%", fontSize = 11.sp, color = Color.White, fontWeight = FontWeight.Bold)
-                        }
-                        Slider(
-                            value = transVolume,
-                            onValueChange = {
-                                transVolume = it
-                                settingsManager.translationVoiceVolume = it
-                            },
-                            valueRange = 0f..1.0f,
-                            modifier = Modifier.height(24.dp),
-                            colors = SliderDefaults.colors(
-                                activeTrackColor = Color(0xFF00C853),
-                                inactiveTrackColor = Color.DarkGray,
-                                thumbColor = Color(0xFF00C853)
-                            )
-                        )
-                    }
-
-                    HorizontalDivider(color = Color.White.copy(alpha = 0.1f))
-
-                    // 7. Settings
-                    Row(
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .clip(RoundedCornerShape(6.dp))
-                            .clickable {
-                                onOpenSettings()
-                                isMenuOpen = false
-                            }
-                            .padding(8.dp),
-                        verticalAlignment = Alignment.CenterVertically
-                    ) {
-                        Icon(
-                            imageVector = Icons.Default.Settings,
-                            contentDescription = "Settings",
-                            tint = Color(0xFF00C853),
-                            modifier = Modifier.size(18.dp)
-                        )
-                        Spacer(modifier = Modifier.width(8.dp))
-                        Text(
-                            text = "Settings",
-                            color = Color(0xFF00C853),
-                            fontSize = 13.sp,
-                            fontWeight = FontWeight.Medium
-                        )
-                    }
-                }
-            }
-        }
-
-        // Green Floating Button
-        Box(
-            modifier = Modifier
-                .size(56.dp)
-                .shadow(6.dp, CircleShape)
-                .background(
-                    brush = Brush.radialGradient(
-                        colors = if (isTranslating) {
-                            listOf(Color(0xFF00FF66), Color(0xFF007A33))
-                        } else {
-                            listOf(Color(0xFF3B82F6), Color(0xFF1D4ED8))
-                        }
-                    ),
-                    shape = CircleShape
-                )
-                .pointerInput(Unit) {
-                    detectDragGestures { change, dragAmount ->
-                        change.consume()
-                        onDrag(dragAmount.x.toInt(), dragAmount.y.toInt())
-                    }
-                }
-                .clickable { isMenuOpen = !isMenuOpen },
-            contentAlignment = Alignment.Center
-        ) {
-            Icon(
-                imageVector = Icons.Default.Translate,
-                contentDescription = "Translator Menu Toggle",
-                tint = Color.White,
-                modifier = Modifier.size(28.dp)
-            )
-            if (isTranslating) {
-                Box(
-                    modifier = Modifier
-                        .size(10.dp)
-                        .align(Alignment.TopEnd)
-                        .offset(x = (-2).dp, y = 2.dp)
-                        .background(Color.Red, CircleShape)
-                        .border(1.5.dp, Color.White, CircleShape)
-                )
-            }
-        }
-
-        // Subtitles display directly attached below the green button when menu is closed
-        if (!isMenuOpen && isTranslating && (subtitle.isNotEmpty() || translation.isNotEmpty())) {
-            Card(
-                shape = RoundedCornerShape(8.dp),
-                colors = CardDefaults.cardColors(
-                    containerColor = Color.Black.copy(alpha = 0.85f)
-                ),
-                border = BorderStroke(1.dp, Color(0xFF00C853).copy(alpha = 0.4f)),
-                modifier = Modifier
-                    .width(300.dp)
-                    .padding(top = 8.dp)
-                    .shadow(4.dp, RoundedCornerShape(8.dp))
-            ) {
-                Column(
-                    modifier = Modifier.padding(10.dp),
-                    horizontalAlignment = Alignment.CenterHorizontally
+                    modifier = Modifier.padding(horizontal = 16.dp, vertical = 10.dp),
+                    horizontalAlignment = Alignment.CenterHorizontally,
+                    verticalArrangement = Arrangement.spacedBy(4.dp)
                 ) {
                     if (subtitle.isNotEmpty()) {
                         Text(
                             text = subtitle,
                             color = Color.LightGray,
-                            fontSize = 13.sp,
+                            fontSize = 14.sp,
                             fontWeight = FontWeight.Normal,
-                            textAlign = TextAlign.Center,
-                            modifier = Modifier.fillMaxWidth().padding(bottom = 4.dp)
+                            textAlign = TextAlign.Center
                         )
                     }
                     if (translation.isNotEmpty()) {
                         Text(
                             text = translation,
                             color = Color(0xFF00C853),
-                            fontSize = 15.sp,
+                            fontSize = 17.sp,
                             fontWeight = FontWeight.Bold,
-                            textAlign = TextAlign.Center,
-                            modifier = Modifier.fillMaxWidth()
+                            textAlign = TextAlign.Center
                         )
                     }
+                }
+            }
+        }
+    }
+}
+
+/**
+ * A beautiful popup menu that opens when clicking the system accessibility shortcut.
+ * Dismisses when tapping outside the central card.
+ */
+@Composable
+fun TranslationMenuPopupContent(
+    isTranslatingFlow: StateFlow<Boolean>,
+    settingsManager: SettingsManager,
+    maxMusicVolume: Int,
+    currentMusicVolume: Int,
+    onStartTranslation: () -> Unit,
+    onStopTranslation: () -> Unit,
+    onSelectCaptionArea: () -> Unit,
+    onOriginalVolumeChanged: (Int) -> Unit,
+    onTranslationVolumeChanged: (Float) -> Unit,
+    onClose: () -> Unit,
+    onOpenSettings: () -> Unit
+) {
+    val isTranslating by isTranslatingFlow.collectAsState()
+    
+    var origVolume by remember { mutableStateOf(settingsManager.originalVideoVolume) }
+    var transVolume by remember { mutableStateOf(settingsManager.translationVoiceVolume) }
+    var targetLanguage by remember { mutableStateOf(settingsManager.targetLanguage) }
+
+    // Full-screen backdrop that dismisses the popup on click
+    Box(
+        modifier = Modifier
+            .fillMaxSize()
+            .background(Color.Black.copy(alpha = 0.45f))
+            .clickable(
+                interactionSource = remember { MutableInteractionSource() },
+                indication = null
+            ) {
+                onClose()
+            },
+        contentAlignment = Alignment.Center
+    ) {
+        // Translation Menu Card
+        Card(
+            shape = RoundedCornerShape(16.dp),
+            colors = CardDefaults.cardColors(
+                containerColor = Color(0xFF161622)
+            ),
+            border = BorderStroke(1.5.dp, Color(0xFF00C853).copy(alpha = 0.6f)),
+            modifier = Modifier
+                .width(320.dp)
+                .padding(16.dp)
+                // Consume clicks inside the card so they don't dismiss the popup
+                .clickable(
+                    interactionSource = remember { MutableInteractionSource() },
+                    indication = null,
+                    enabled = true,
+                    onClick = {}
+                )
+                .testTag("translation_menu_popup_card")
+        ) {
+            Column(
+                modifier = Modifier.padding(16.dp),
+                verticalArrangement = Arrangement.spacedBy(16.dp)
+            ) {
+                // Header
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Text(
+                        text = "Translation Menu",
+                        fontWeight = FontWeight.Bold,
+                        fontSize = 16.sp,
+                        color = Color(0xFF00C853)
+                    )
+                    IconButton(
+                        onClick = onClose,
+                        modifier = Modifier.size(24.dp)
+                    ) {
+                        Icon(
+                            imageVector = Icons.Default.Close,
+                            contentDescription = "Close Menu",
+                            tint = Color.LightGray
+                        )
+                    }
+                }
+
+                // Start/Stop Session
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.spacedBy(12.dp)
+                ) {
+                    Button(
+                        onClick = onStartTranslation,
+                        colors = ButtonDefaults.buttonColors(
+                            containerColor = if (!isTranslating) Color(0xFF00C853) else Color.Gray
+                        ),
+                        modifier = Modifier
+                            .weight(1f)
+                            .height(40.dp)
+                            .testTag("popup_start_button"),
+                        shape = RoundedCornerShape(8.dp),
+                        enabled = !isTranslating
+                    ) {
+                        Icon(imageVector = Icons.Default.PlayArrow, contentDescription = "Start", modifier = Modifier.size(16.dp))
+                        Spacer(modifier = Modifier.width(4.dp))
+                        Text("Start", fontSize = 12.sp, fontWeight = FontWeight.Bold)
+                    }
+
+                    Button(
+                        onClick = onStopTranslation,
+                        colors = ButtonDefaults.buttonColors(
+                            containerColor = if (isTranslating) Color.Red else Color.Gray
+                        ),
+                        modifier = Modifier
+                            .weight(1f)
+                            .height(40.dp)
+                            .testTag("popup_stop_button"),
+                        shape = RoundedCornerShape(8.dp),
+                        enabled = isTranslating
+                    ) {
+                        Icon(imageVector = Icons.Default.Stop, contentDescription = "Stop", modifier = Modifier.size(16.dp))
+                        Spacer(modifier = Modifier.width(4.dp))
+                        Text("Stop", fontSize = 12.sp, fontWeight = FontWeight.Bold)
+                    }
+                }
+
+                // Custom Screen Selection
+                Button(
+                    onClick = onSelectCaptionArea,
+                    colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF2E2E3E)),
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .height(40.dp)
+                        .testTag("popup_select_area_button"),
+                    shape = RoundedCornerShape(8.dp)
+                ) {
+                    Icon(imageVector = Icons.Default.CropFree, contentDescription = "Crop", modifier = Modifier.size(16.dp))
+                    Spacer(modifier = Modifier.width(8.dp))
+                    Text("Custom Screen Selection", fontSize = 12.sp, fontWeight = FontWeight.Bold, color = Color.White)
+                }
+
+                HorizontalDivider(color = Color.White.copy(alpha = 0.08f))
+
+                // Original Video Volume Slider
+                Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.SpaceBetween,
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Row(verticalAlignment = Alignment.CenterVertically) {
+                            Icon(imageVector = Icons.Default.VolumeUp, contentDescription = "Original Vol", tint = Color.LightGray, modifier = Modifier.size(14.dp))
+                            Spacer(modifier = Modifier.width(6.dp))
+                            Text("Original Video Volume", fontSize = 12.sp, color = Color.LightGray)
+                        }
+                        Text("$origVolume / $maxMusicVolume", fontSize = 12.sp, color = Color.White, fontWeight = FontWeight.Bold)
+                    }
+                    Slider(
+                        value = origVolume.toFloat(),
+                        onValueChange = {
+                            val newVol = it.toInt()
+                            origVolume = newVol
+                            onOriginalVolumeChanged(newVol)
+                        },
+                        valueRange = 0f..maxMusicVolume.toFloat(),
+                        colors = SliderDefaults.colors(
+                            activeTrackColor = Color(0xFF00C853),
+                            inactiveTrackColor = Color.DarkGray,
+                            thumbColor = Color(0xFF00C853)
+                        ),
+                        modifier = Modifier.height(24.dp)
+                    )
+                }
+
+                // Translation Voice Volume Slider
+                Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.SpaceBetween,
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Row(verticalAlignment = Alignment.CenterVertically) {
+                            Icon(imageVector = Icons.Default.Hearing, contentDescription = "Translation Vol", tint = Color.LightGray, modifier = Modifier.size(14.dp))
+                            Spacer(modifier = Modifier.width(6.dp))
+                            Text("Translation Voice Volume", fontSize = 12.sp, color = Color.LightGray)
+                        }
+                        Text("${(transVolume * 100).toInt()}%", fontSize = 12.sp, color = Color.White, fontWeight = FontWeight.Bold)
+                    }
+                    Slider(
+                        value = transVolume,
+                        onValueChange = {
+                            transVolume = it
+                            settingsManager.translationVoiceVolume = it
+                            onTranslationVolumeChanged(it)
+                        },
+                        valueRange = 0f..1.0f,
+                        colors = SliderDefaults.colors(
+                            activeTrackColor = Color(0xFF00C853),
+                            inactiveTrackColor = Color.DarkGray,
+                            thumbColor = Color(0xFF00C853)
+                        ),
+                        modifier = Modifier.height(24.dp)
+                    )
+                }
+
+                HorizontalDivider(color = Color.White.copy(alpha = 0.08f))
+
+                // Language selection
+                Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                    Text("Target Language", fontSize = 12.sp, color = Color.LightGray)
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.spacedBy(6.dp)
+                    ) {
+                        // Tamil
+                        Box(
+                            modifier = Modifier
+                                .background(
+                                    if (targetLanguage == "ta") Color(0xFF00C853).copy(alpha = 0.15f) else Color(0xFF2E2E3E),
+                                    RoundedCornerShape(6.dp)
+                                )
+                                .border(
+                                    1.dp,
+                                    if (targetLanguage == "ta") Color(0xFF00C853) else Color.Transparent,
+                                    RoundedCornerShape(6.dp)
+                                )
+                                .clickable {
+                                    targetLanguage = "ta"
+                                    settingsManager.targetLanguage = "ta"
+                                }
+                                .padding(horizontal = 8.dp, vertical = 6.dp)
+                        ) {
+                            Text("Tamil", color = if (targetLanguage == "ta") Color(0xFF00C853) else Color.White, fontSize = 11.sp, fontWeight = FontWeight.Medium)
+                        }
+                        // Hindi
+                        Box(
+                            modifier = Modifier
+                                .background(
+                                    if (targetLanguage == "hi") Color(0xFF00C853).copy(alpha = 0.15f) else Color(0xFF2E2E3E),
+                                    RoundedCornerShape(6.dp)
+                                )
+                                .border(
+                                    1.dp,
+                                    if (targetLanguage == "hi") Color(0xFF00C853) else Color.Transparent,
+                                    RoundedCornerShape(6.dp)
+                                )
+                                .clickable {
+                                    targetLanguage = "hi"
+                                    settingsManager.targetLanguage = "hi"
+                                }
+                                .padding(horizontal = 8.dp, vertical = 6.dp)
+                        ) {
+                            Text("Hindi", color = if (targetLanguage == "hi") Color(0xFF00C853) else Color.White, fontSize = 11.sp, fontWeight = FontWeight.Medium)
+                        }
+                        // Telugu
+                        Box(
+                            modifier = Modifier
+                                .background(
+                                    if (targetLanguage == "te") Color(0xFF00C853).copy(alpha = 0.15f) else Color(0xFF2E2E3E),
+                                    RoundedCornerShape(6.dp)
+                                )
+                                .border(
+                                    1.dp,
+                                    if (targetLanguage == "te") Color(0xFF00C853) else Color.Transparent,
+                                    RoundedCornerShape(6.dp)
+                                )
+                                .clickable {
+                                    targetLanguage = "te"
+                                    settingsManager.targetLanguage = "te"
+                                }
+                                .padding(horizontal = 8.dp, vertical = 6.dp)
+                        ) {
+                            Text("Telugu", color = if (targetLanguage == "te") Color(0xFF00C853) else Color.White, fontSize = 11.sp, fontWeight = FontWeight.Medium)
+                        }
+                    }
+                }
+
+                HorizontalDivider(color = Color.White.copy(alpha = 0.08f))
+
+                // Configure Settings button
+                Button(
+                    onClick = onOpenSettings,
+                    colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF252538)),
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .height(36.dp)
+                        .testTag("popup_settings_button"),
+                    shape = RoundedCornerShape(6.dp)
+                ) {
+                    Icon(imageVector = Icons.Default.Settings, contentDescription = "Settings", tint = Color(0xFF00C853), modifier = Modifier.size(14.dp))
+                    Spacer(modifier = Modifier.width(6.dp))
+                    Text("Settings", fontSize = 12.sp, fontWeight = FontWeight.SemiBold, color = Color.White)
                 }
             }
         }

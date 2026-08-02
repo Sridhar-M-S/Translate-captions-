@@ -10,6 +10,7 @@ class TtsManager(private val context: Context) : TextToSpeech.OnInitListener {
     private var tts: TextToSpeech? = null
     private var isInitialized = false
     private var pendingText: String? = null
+    private var pendingLang: String? = null
 
     init {
         tts = TextToSpeech(context.applicationContext, this)
@@ -17,54 +18,55 @@ class TtsManager(private val context: Context) : TextToSpeech.OnInitListener {
 
     override fun onInit(status: Int) {
         if (status == TextToSpeech.SUCCESS) {
-            val locale = Locale("ta", "IN")
-            val result = tts?.setLanguage(locale)
-            if (result == TextToSpeech.LANG_MISSING_DATA || result == TextToSpeech.LANG_NOT_SUPPORTED) {
-                Log.e("TtsManager", "Tamil language is not supported or missing data")
-                // Fallback to standard Tamil locale
-                tts?.setLanguage(Locale("ta"))
-            }
             isInitialized = true
             pendingText?.let {
-                speak(it)
+                speak(it, pendingLang ?: "ta")
                 pendingText = null
+                pendingLang = null
             }
         } else {
             Log.e("TtsManager", "TTS Initialization failed")
         }
     }
 
-    fun speak(text: String, speed: Float = 1.0f, pitch: Float = 1.0f, gender: String = "female", volume: Float = 1.0f) {
+    fun speak(text: String, languageCode: String = "ta", speed: Float = 1.0f, pitch: Float = 1.0f, gender: String = "female", volume: Float = 1.0f) {
         if (!isInitialized) {
             pendingText = text
+            pendingLang = languageCode
             return
         }
         try {
             tts?.setSpeechRate(speed)
             tts?.setPitch(pitch)
             
-            // Try to set high-quality Tamil voice based on requested gender if available
+            val locale = when (languageCode.lowercase()) {
+                "ta" -> Locale("ta", "IN")
+                "hi" -> Locale("hi", "IN")
+                "te" -> Locale("te", "IN")
+                else -> Locale(languageCode)
+            }
+            tts?.setLanguage(locale)
+            
+            // Try to set high-quality voice based on requested gender if available
             val voices = tts?.voices
             if (voices != null) {
-                val tamilVoices = voices.filter { voice ->
-                    voice.locale.language == "ta"
+                val matchingVoices = voices.filter { voice ->
+                    voice.locale.language == locale.language
                 }
                 
-                if (tamilVoices.isNotEmpty()) {
+                if (matchingVoices.isNotEmpty()) {
                     val matchedVoice = if (gender.lowercase() == "male") {
-                        // Look for typical male voice markers (e.g., "-man-", "-male-", "tam" for tamil male, etc.)
-                        tamilVoices.find { voice ->
+                        matchingVoices.find { voice ->
                             voice.name.contains("male", ignoreCase = true) ||
                             voice.name.contains("man", ignoreCase = true) ||
                             voice.name.contains("tam", ignoreCase = true)
-                        } ?: tamilVoices.firstOrNull()
+                        } ?: matchingVoices.firstOrNull()
                     } else {
-                        // Look for typical female voice markers
-                        tamilVoices.find { voice ->
+                        matchingVoices.find { voice ->
                             voice.name.contains("female", ignoreCase = true) ||
                             voice.name.contains("woman", ignoreCase = true) ||
                             voice.name.contains("taf", ignoreCase = true)
-                        } ?: tamilVoices.firstOrNull()
+                        } ?: matchingVoices.firstOrNull()
                     }
                     if (matchedVoice != null) {
                         tts?.voice = matchedVoice
@@ -74,7 +76,7 @@ class TtsManager(private val context: Context) : TextToSpeech.OnInitListener {
 
             // Set translation voice volume relative multiplier
             val params = android.os.Bundle().apply {
-                putString(TextToSpeech.Engine.KEY_PARAM_VOLUME, volume.toString())
+                putString(TextToSpeech.Engine.KEY_PARAM_VOLUME, "1.0") // Keep full relative volume, stream master handles it
                 // Use STREAM_ACCESSIBILITY so we can mute stream_music without muting translation
                 putInt(TextToSpeech.Engine.KEY_PARAM_STREAM, android.media.AudioManager.STREAM_ACCESSIBILITY)
             }
