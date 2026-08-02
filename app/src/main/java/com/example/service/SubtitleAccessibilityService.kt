@@ -401,41 +401,93 @@ class SubtitleAccessibilityService : AccessibilityService() {
         }
     }
 
+    private fun isValidWord(word: String): Boolean {
+        val trimmed = word.trim()
+        if (trimmed.isEmpty()) return false
+
+        // Rule 1: Remove random Unicode garbage characters (only allow ASCII letters, numbers, standard punctuation)
+        if (trimmed.any { it.code > 127 || (!it.isLetterOrDigit() && !". , ? ! ' \" - :".contains(it)) }) {
+            return false
+        }
+
+        // If pure symbols/punctuation (e.g. ###, %%%)
+        if (trimmed.all { !it.isLetterOrDigit() }) {
+            return false
+        }
+
+        val len = trimmed.length
+
+        // Rule 4: Ignore words where more than 40% of characters are digits or symbols
+        val nonLetterCount = trimmed.count { !it.isLetter() }
+        if (nonLetterCount.toDouble() / len > 0.4) {
+            return false
+        }
+
+        // Rule 3: Ignore words containing many symbols (more than 2 symbols or symbol ratio > 30%)
+        val symbolCount = trimmed.count { !it.isLetterOrDigit() && !it.isWhitespace() }
+        if (symbolCount > 2 || (symbolCount.toDouble() / len > 0.3)) {
+            return false
+        }
+
+        // Rule 2 & 6: Isolated letters mixed with numbers or non-words (e.g. 5I, 1O, or gibberish like Gsiu, Geuw with 0 vowels)
+        val lettersOnly = trimmed.filter { it.isLetter() }
+        if (lettersOnly.isNotEmpty()) {
+            val lowerLetters = lettersOnly.lowercase(Locale.ROOT)
+            val vowels = lowerLetters.count { it == 'a' || it == 'e' || it == 'i' || it == 'o' || it == 'u' || it == 'y' }
+            // If length >= 3 and 0 vowels, it's gibberish (e.g. Gsiu, Geuw)
+            if (lettersOnly.length >= 3 && vowels == 0) {
+                return false
+            }
+            // Single letter must be 'a' or 'i'
+            if (lettersOnly.length == 1 && lowerLetters != "a" && lowerLetters != "i") {
+                return false
+            }
+        }
+
+        return true
+    }
+
     private fun extractTextFromVision(visionText: com.google.mlkit.vision.text.Text): String {
-        val lines = mutableListOf<String>()
+        val validLines = mutableListOf<String>()
         for (block in visionText.textBlocks) {
             for (line in block.lines) {
                 val lineText = line.text.trim()
-                if (lineText.length >= 1 && lineText.any { it.isLetterOrDigit() }) {
-                    val lower = lineText.lowercase(Locale.ROOT)
-                    if (!lower.contains("visit advertiser") &&
-                        !lower.contains("skip ad") &&
-                        !lower.contains("sponsored") &&
-                        !lower.contains("subscribe") &&
-                        !lower.contains("comments") &&
-                        !lower.contains("live translator") &&
-                        !lower.contains("share") &&
-                        !lower.contains("like") &&
-                        !lower.contains("dislike") &&
-                        !lower.contains("save") &&
-                        !lower.contains("download") &&
-                        !lower.contains("playlist") &&
-                        !lower.contains("autoplay") &&
-                        !lower.contains("home") &&
-                        !lower.contains("shorts") &&
-                        !lower.contains("subscriptions") &&
-                        !lower.contains("library") &&
-                        !lower.contains("channel") &&
-                        !lower.matches(Regex(".*\\d{1,2}:\\d{2}\\s*/\\s*\\d{1,2}:\\d{2}.*")) && // Timestamp 0:00 / 3:45
-                        !lower.matches(Regex(".*\\d+\\s*(views|subscribers|likes).*"))
-                    ) {
-                        lines.add(lineText)
+                if (lineText.isEmpty()) continue
+
+                val lower = lineText.lowercase(Locale.ROOT)
+                if (!lower.contains("visit advertiser") &&
+                    !lower.contains("skip ad") &&
+                    !lower.contains("sponsored") &&
+                    !lower.contains("subscribe") &&
+                    !lower.contains("comments") &&
+                    !lower.contains("live translator") &&
+                    !lower.contains("share") &&
+                    !lower.contains("like") &&
+                    !lower.contains("dislike") &&
+                    !lower.contains("save") &&
+                    !lower.contains("download") &&
+                    !lower.contains("playlist") &&
+                    !lower.contains("autoplay") &&
+                    !lower.contains("home") &&
+                    !lower.contains("shorts") &&
+                    !lower.contains("subscriptions") &&
+                    !lower.contains("library") &&
+                    !lower.contains("channel") &&
+                    !lower.matches(Regex(".*\\d{1,2}:\\d{2}\\s*/\\s*\\d{1,2}:\\d{2}.*")) &&
+                    !lower.matches(Regex(".*\\d+\\s*(views|subscribers|likes).*"))
+                ) {
+                    val words = lineText.split(Regex("\\s+"))
+                    val validWords = words.filter { isValidWord(it) }
+                    if (validWords.isNotEmpty() && validWords.size >= (words.size / 2.0)) {
+                        validLines.add(validWords.joinToString(" "))
                     }
                 }
             }
         }
-        if (lines.isEmpty()) return ""
-        return lines.joinToString(" ").trim()
+        if (validLines.isEmpty()) return ""
+        val combined = validLines.joinToString(" ").trim()
+        if (!combined.any { it.isLetter() }) return ""
+        return combined
     }
 
     private fun runOcrOnBitmap(bitmap: Bitmap) {
