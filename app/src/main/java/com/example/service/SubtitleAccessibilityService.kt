@@ -378,7 +378,7 @@ class SubtitleAccessibilityService : AccessibilityService() {
                             emptyOcrFramesCounter++
                             if (emptyOcrFramesCounter >= 2) {
                                 // Subtitle is officially gone from screen, clear the states
-                                subtitleState.value = ""
+                                subtitleState.value = "No text detected"
                                 translationState.value = ""
                                 lastSubtitleText = ""
                             }
@@ -389,9 +389,13 @@ class SubtitleAccessibilityService : AccessibilityService() {
                 }
                 .addOnFailureListener { e ->
                     Log.e("SubtitleService", "OCR Text recognition failed", e)
+                    subtitleState.value = "No text detected"
+                    translationState.value = "OCR Recognition Error: ${e.localizedMessage}"
                 }
         } catch (e: Exception) {
             Log.e("SubtitleService", "Error running OCR on bitmap", e)
+            subtitleState.value = "No text detected"
+            translationState.value = "OCR Bitmap Error: ${e.localizedMessage}"
         }
     }
 
@@ -431,7 +435,8 @@ class SubtitleAccessibilityService : AccessibilityService() {
                     }
 
                     // TTS speak in target language if translation voice is enabled and not muted
-                    val isVoiceOn = settingsManager.isVoiceEnabled && !isMutedState.value
+                    // For now, completely ignore Text-to-Speech (audio) as requested for visual debugging
+                    val isVoiceOn = false
                     if (isVoiceOn) {
                         try {
                             ttsManager.speak(
@@ -446,9 +451,12 @@ class SubtitleAccessibilityService : AccessibilityService() {
                             Log.e("SubtitleService", "TTS speak failed", e)
                         }
                     }
+                } else if (result is TranslationResult.Error) {
+                    translationState.value = "Translation Error: ${result.message}"
                 }
             } catch (e: Exception) {
                 Log.e("SubtitleService", "Error in processNewSubtitle coroutine", e)
+                translationState.value = "Translation Error: ${e.localizedMessage}"
             }
         }
     }
@@ -1015,44 +1023,107 @@ fun SubtitleOverlayContent(
     val translation by translationFlow.collectAsState()
     val isTranslating by isTranslatingFlow.collectAsState()
 
-    if (isTranslating && (subtitle.isNotEmpty() || translation.isNotEmpty())) {
+    if (isTranslating) {
         Box(
             modifier = Modifier
                 .fillMaxWidth()
-                .padding(horizontal = 24.dp, vertical = 8.dp),
+                .padding(horizontal = 16.dp, vertical = 8.dp),
             contentAlignment = Alignment.Center
         ) {
             Card(
                 shape = RoundedCornerShape(12.dp),
                 colors = CardDefaults.cardColors(
-                    containerColor = Color.Black.copy(alpha = 0.75f)
+                    containerColor = Color(0xFF1B5E20).copy(alpha = 0.9f)
                 ),
-                border = BorderStroke(1.5.dp, Color(0xFF00C853).copy(alpha = 0.6f)),
+                border = BorderStroke(2.dp, Color(0xFF00E676)),
                 modifier = Modifier
-                    .wrapContentWidth()
-                    .padding(8.dp)
+                    .fillMaxWidth()
+                    .padding(4.dp)
             ) {
                 Column(
-                    modifier = Modifier.padding(horizontal = 16.dp, vertical = 10.dp),
+                    modifier = Modifier.padding(12.dp),
                     horizontalAlignment = Alignment.CenterHorizontally,
-                    verticalArrangement = Arrangement.spacedBy(4.dp)
+                    verticalArrangement = Arrangement.spacedBy(8.dp)
                 ) {
-                    if (subtitle.isNotEmpty()) {
+                    // Header
+                    Text(
+                        text = "LIVE TRANSLATOR - DEBUG PIPELINE",
+                        color = Color(0xFFB9F6CA),
+                        fontSize = 11.sp,
+                        style = androidx.compose.ui.text.TextStyle(
+                            fontWeight = FontWeight.Bold,
+                            letterSpacing = 1.2.sp
+                        )
+                    )
+
+                    // English OCR
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.spacedBy(8.dp),
+                        verticalAlignment = Alignment.Top
+                    ) {
                         Text(
-                            text = subtitle,
-                            color = Color.LightGray,
-                            fontSize = 14.sp,
-                            fontWeight = FontWeight.Normal,
-                            textAlign = TextAlign.Center
+                            text = "OCR [EN]:",
+                            color = Color(0xFFE8F5E9),
+                            fontSize = 12.sp,
+                            fontWeight = FontWeight.Bold,
+                            modifier = Modifier.width(72.dp)
+                        )
+                        val isNoText = subtitle.isEmpty() || subtitle == "No text detected"
+                        Text(
+                            text = if (isNoText) "No text detected" else subtitle,
+                            color = if (isNoText) Color(0xFFFF8A80) else Color.White,
+                            fontSize = 13.sp,
+                            fontWeight = FontWeight.Medium,
+                            modifier = Modifier.weight(1f)
                         )
                     }
-                    if (translation.isNotEmpty()) {
+
+                    // Divider
+                    Box(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .height(1.dp)
+                            .background(Color(0xFF2E7D32))
+                    )
+
+                    // Tamil Translation
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.spacedBy(8.dp),
+                        verticalAlignment = Alignment.Top
+                    ) {
                         Text(
-                            text = translation,
-                            color = Color(0xFF00C853),
-                            fontSize = 17.sp,
+                            text = "TRANS [TA]:",
+                            color = Color(0xFFE8F5E9),
+                            fontSize = 12.sp,
                             fontWeight = FontWeight.Bold,
-                            textAlign = TextAlign.Center
+                            modifier = Modifier.width(72.dp)
+                        )
+                        val isNoText = subtitle.isEmpty() || subtitle == "No text detected"
+                        val displayTranslation = if (translation.startsWith("Translation Error")) {
+                            translation
+                        } else if (isNoText) {
+                            "—"
+                        } else if (translation.isEmpty()) {
+                            "Waiting for translation..."
+                        } else {
+                            translation
+                        }
+
+                        val textColor = when {
+                            displayTranslation.startsWith("Translation Error") -> Color(0xFFFFB74D)
+                            displayTranslation == "—" -> Color(0xFFFF8A80)
+                            displayTranslation == "Waiting for translation..." -> Color(0xFFA5D6A7)
+                            else -> Color(0xFFCCFF90)
+                        }
+
+                        Text(
+                            text = displayTranslation,
+                            color = textColor,
+                            fontSize = 15.sp,
+                            fontWeight = FontWeight.Bold,
+                            modifier = Modifier.weight(1f)
                         )
                     }
                 }
