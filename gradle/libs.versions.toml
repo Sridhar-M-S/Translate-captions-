@@ -97,7 +97,7 @@ firebase-auth = { group = "com.google.firebase", name = "firebase-auth" }
 androidx-credentials = { group = "androidx.credentials", name = "credentials", version.ref = "credentials" }
 androidx-credentials-play-services = { group = "androidx.credentials", name = "credentials-play-services-auth", version.ref = "credentials" }
 googleid = { group = "com.google.android.libraries.identity.googleid", name = "googleid", version.ref = "googleid" }
-mlkit-text-recognition = { group = "com.google.android.gms", name = "play-services-mlkit-text-recognition", version = "19.0.1" }
+mlkit-text-recognition = { group = "com.google.mlkit", name = "text-recognition", version = "16.0.1" }
 mlkit-language-id = { group = "com.google.android.gms", name = "play-services-mlkit-language-id", version = "17.0.0" }
 mlkit-translate = { group = "com.google.mlkit", name = "translate", version = "17.0.1" }
 

@@ -17,9 +17,10 @@ import android.view.MotionEvent
 import android.view.View
 import android.view.WindowManager
 import android.view.accessibility.AccessibilityEvent
-import android.view.accessibility.AccessibilityNodeInfo
 import android.widget.FrameLayout
 import android.media.AudioManager
+import java.io.File
+import java.io.FileOutputStream
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
@@ -30,6 +31,7 @@ import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.*
+import androidx.compose.material.icons.automirrored.filled.*
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
@@ -102,11 +104,15 @@ class SubtitleAccessibilityService : AccessibilityService() {
     private var selectionOverlayView: FrameLayout? = null
     private var menuOverlayView: FrameLayout? = null
 
-    // State flows for compose overlay
+    // State flows for compose overlay & debugging
     private val subtitleState = MutableStateFlow("")
     private val translationState = MutableStateFlow("")
     private val isTranslatingState = MutableStateFlow(false)
     private val isMutedState = MutableStateFlow(false)
+    private val debugStatusState = MutableStateFlow("Initializing OCR...")
+    private val debugRegionSizeState = MutableStateFlow("0x0")
+    private val debugRegionCoordsState = MutableStateFlow("l=0, t=0, r=0, b=0")
+    private val debugCaptureState = MutableStateFlow("Idle")
 
     // Periodic OCR scanner handler
     private val ocrHandler = Handler(Looper.getMainLooper())
@@ -138,11 +144,6 @@ class SubtitleAccessibilityService : AccessibilityService() {
             // Register shared preference change listener
             val prefs = getSharedPreferences("subtitle_translator_prefs", Context.MODE_PRIVATE)
             prefs.registerOnSharedPreferenceChangeListener(prefListener)
-            
-            // Show subtitle overlay if already active
-            if (isTranslatingState.value) {
-                showSubtitleOverlay()
-            }
             
             // Apply initial audio settings
             applyAudioSettings()
@@ -260,37 +261,36 @@ class SubtitleAccessibilityService : AccessibilityService() {
         // Ignored to strictly follow: "Only perform OCR inside the selected rectangle. Ignore every other text on the screen outside the rectangle."
     }
 
-    private fun findTextNodes(node: AccessibilityNodeInfo, list: MutableList<String>) {
+    private fun isBitmapBlank(bitmap: Bitmap): Boolean {
         try {
-            if (node.text != null && node.text.toString().isNotBlank()) {
-                list.add(node.text.toString())
-            }
-            for (i in 0 until node.childCount) {
-                val child = node.getChild(i)
-                if (child != null) {
-                    try {
-                        findTextNodes(child, list)
-                    } finally {
-                        try {
-                            if (Build.VERSION.SDK_INT < Build.VERSION_CODES.TIRAMISU) {
-                                @Suppress("DEPRECATION")
-                                child.recycle()
-                            }
-                        } catch (e: Exception) {
-                            // Ignore recycle error
-                        }
+            val w = bitmap.width
+            val h = bitmap.height
+            if (w <= 0 || h <= 0) return true
+            var nonBlackCount = 0
+            val stepX = maxOf(1, w / 15)
+            val stepY = maxOf(1, h / 15)
+            for (x in 0 until w step stepX) {
+                for (y in 0 until h step stepY) {
+                    val pixel = bitmap.getPixel(x, y)
+                    val r = (pixel shr 16) and 0xFF
+                    val g = (pixel shr 8) and 0xFF
+                    val b = pixel and 0xFF
+                    if (r > 20 || g > 20 || b > 20) {
+                        nonBlackCount++
                     }
                 }
             }
+            return nonBlackCount < 3
         } catch (e: Exception) {
-            Log.e("SubtitleService", "Error in findTextNodes", e)
+            return false
         }
     }
 
     private fun captureAndRecognizeText() {
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
             try {
-                Log.d("SubtitleService", "Initiating takeScreenshot capture...")
+                Log.d("SubtitleService", "OCR Debug: Initiating takeScreenshot capture...")
+                debugCaptureState.value = "Capturing..."
                 takeScreenshot(Display.DEFAULT_DISPLAY, mainExecutor, object : TakeScreenshotCallback {
                     override fun onSuccess(screenshotResult: ScreenshotResult) {
                         try {
@@ -299,103 +299,172 @@ class SubtitleAccessibilityService : AccessibilityService() {
                             val bitmap = Bitmap.wrapHardwareBuffer(buffer, colorSpace)
 
                             if (bitmap != null) {
-                                // Convert to software bitmap for ML Kit while keeping the buffer open
                                 val softwareBitmap = bitmap.copy(Bitmap.Config.ARGB_8888, false)
-                                // Close the hardware buffer after software copy is made to release hardware resources safely
                                 buffer.close()
                                 
                                 val width = softwareBitmap.width
                                 val height = softwareBitmap.height
                                 
-                                // Calculate cropping coordinates from relative crop settings
-                                val left = (settingsManager.customRectLeft * width).toInt().coerceIn(0, width - 1)
-                                val top = (settingsManager.customRectTop * height).toInt().coerceIn(0, height - 1)
-                                val right = (settingsManager.customRectRight * width).toInt().coerceIn(left + 1, width)
-                                val bottom = (settingsManager.customRectBottom * height).toInt().coerceIn(top + 1, height)
+                                val lPct = settingsManager.customRectLeft
+                                val tPct = settingsManager.customRectTop
+                                val rPct = settingsManager.customRectRight
+                                val bPct = settingsManager.customRectBottom
+
+                                val left = (lPct * width).toInt().coerceIn(0, width - 1)
+                                val top = (tPct * height).toInt().coerceIn(0, height - 1)
+                                val right = (rPct * width).toInt().coerceIn(left + 1, width)
+                                val bottom = (bPct * height).toInt().coerceIn(top + 1, height)
                                 
                                 val cropWidth = right - left
                                 val cropHeight = bottom - top
                                 
-                                Log.d("SubtitleService", "Screenshot onSuccess. Size: ${width}x${height}. Crop: l=$left, t=$top, r=$right, b=$bottom (width=$cropWidth, height=$cropHeight)")
+                                debugRegionSizeState.value = "${cropWidth}x${cropHeight}"
+                                debugRegionCoordsState.value = "l=$left, t=$top, r=$right, b=$bottom"
+                                
+                                Log.d("SubtitleService", "OCR Debug: Screenshot success. Screen: ${width}x${height}, Crop: l=$left, t=$top, r=$right, b=$bottom (w=$cropWidth, h=$cropHeight)")
                                 
                                 if (cropWidth > 0 && cropHeight > 0) {
                                     val croppedBitmap = Bitmap.createBitmap(softwareBitmap, left, top, cropWidth, cropHeight)
+                                    
+                                    // Save cropped bitmap to local storage for inspection
+                                    try {
+                                        val debugFile = File(filesDir, "debug_ocr_crop.png")
+                                        FileOutputStream(debugFile).use { out ->
+                                            croppedBitmap.compress(Bitmap.CompressFormat.PNG, 100, out)
+                                        }
+                                        Log.d("SubtitleService", "OCR Debug: Saved cropped OCR bitmap to ${debugFile.absolutePath}")
+                                    } catch (e: Exception) {
+                                        Log.e("SubtitleService", "OCR Debug: Failed to save debug bitmap", e)
+                                    }
+
+                                    val blank = isBitmapBlank(croppedBitmap)
+                                    if (blank) {
+                                        Log.w("SubtitleService", "OCR Debug: Cropped bitmap is BLANK (all black or uniform).")
+                                        debugCaptureState.value = "Capture OK, Bitmap BLANK"
+                                    } else {
+                                        debugCaptureState.value = "Capture OK, Non-blank"
+                                    }
+
                                     runOcrOnBitmap(croppedBitmap)
                                     croppedBitmap.recycle()
                                 } else {
-                                    Log.w("SubtitleService", "Invalid crop dimensions, running OCR on entire screen")
+                                    Log.w("SubtitleService", "OCR Debug: Invalid crop dimensions ($cropWidth x $cropHeight)")
+                                    debugCaptureState.value = "Invalid crop dimensions"
                                     runOcrOnBitmap(softwareBitmap)
                                 }
                                 softwareBitmap.recycle()
                             } else {
-                                Log.e("SubtitleService", "Wrapped hardware bitmap is null!")
+                                Log.e("SubtitleService", "OCR Debug: Wrapped hardware bitmap is null!")
+                                debugCaptureState.value = "Hardware bitmap is null"
                                 buffer.close()
                             }
                         } catch (e: Exception) {
-                            Log.e("SubtitleService", "Error processing screenshot onSuccess", e)
+                            Log.e("SubtitleService", "OCR Debug: Error processing screenshot onSuccess", e)
+                            debugCaptureState.value = "Processing Error: ${e.localizedMessage}"
                         }
                     }
 
                     override fun onFailure(errorCode: Int) {
-                        Log.e("SubtitleService", "Screenshot capture onFailure called. ErrorCode: $errorCode")
+                        Log.e("SubtitleService", "OCR Debug: takeScreenshot onFailure called. ErrorCode: $errorCode")
+                        debugCaptureState.value = "takeScreenshot Failed (code $errorCode)"
+                        subtitleState.value = "No text detected (Capture Failed)"
                     }
                 })
             } catch (e: Exception) {
-                Log.e("SubtitleService", "Error requesting takeScreenshot", e)
+                Log.e("SubtitleService", "OCR Debug: Error requesting takeScreenshot", e)
+                debugCaptureState.value = "Request Exception: ${e.localizedMessage}"
             }
         } else {
-            Log.w("SubtitleService", "Screenshot capture not supported on SDK versions below R (API 30)")
+            Log.w("SubtitleService", "OCR Debug: Screenshot capture not supported below SDK 30")
+            debugCaptureState.value = "SDK < 30 not supported"
         }
+    }
+
+    private fun extractTextFromVision(visionText: com.google.mlkit.vision.text.Text): String {
+        val lines = mutableListOf<String>()
+        for (block in visionText.textBlocks) {
+            for (line in block.lines) {
+                val lineText = line.text.trim()
+                if (lineText.length >= 1) {
+                    val lower = lineText.lowercase(Locale.ROOT)
+                    if (!lower.contains("visit advertiser") &&
+                        !lower.contains("skip") &&
+                        !lower.contains("sponsored") &&
+                        !lower.contains("subscribe") &&
+                        !lower.contains("comments") &&
+                        !lower.contains("live translator")
+                    ) {
+                        lines.add(lineText)
+                    }
+                }
+            }
+        }
+        if (lines.isEmpty()) return ""
+        return lines.joinToString(" ").trim()
     }
 
     private fun runOcrOnBitmap(bitmap: Bitmap) {
         try {
-            val image = InputImage.fromBitmap(bitmap, 0)
+            val upscaled = try {
+                Bitmap.createScaledBitmap(bitmap, bitmap.width * 2, bitmap.height * 2, true)
+            } catch (e: Exception) {
+                bitmap
+            }
+
+            val image = InputImage.fromBitmap(upscaled, 0)
             val recognizer = textRecognizer ?: TextRecognition.getClient(TextRecognizerOptions.DEFAULT_OPTIONS)
             
             recognizer.process(image)
                 .addOnSuccessListener { visionText ->
                     try {
-                        val subtitleLines = mutableListOf<String>()
-                        for (block in visionText.textBlocks) {
-                            for (line in block.lines) {
-                                subtitleLines.add(line.text)
-                            }
-                        }
-
-                        val combinedText = subtitleLines.joinToString(" ").trim()
-                        Log.d("SubtitleService", "OCR raw detected text: '$combinedText'")
+                        if (upscaled != bitmap) upscaled.recycle()
+                        
+                        val blockCount = visionText.textBlocks.size
+                        val rawText = visionText.text ?: ""
+                        Log.d("SubtitleService", "OCR Debug: ML Kit processed. Blocks: $blockCount, Raw text: '$rawText'")
+                        
+                        val combinedText = extractTextFromVision(visionText)
+                        Log.d("SubtitleService", "OCR Debug: Filtered text: '$combinedText'")
                         
                         if (combinedText.isNotEmpty()) {
-                            emptyOcrFramesCounter = 0 // Reset empty frames counter
-                            if (combinedText.length in 1..1000) {
-                                processNewSubtitle(combinedText)
-                            } else {
-                                Log.d("SubtitleService", "Detected text ignored due to length constraints (${combinedText.length} chars)")
-                            }
+                            emptyOcrFramesCounter = 0
+                            debugStatusState.value = "Success: '$combinedText'"
+                            processNewSubtitle(combinedText)
                         } else {
-                            // Increment consecutive empty frames counter
                             emptyOcrFramesCounter++
-                            if (emptyOcrFramesCounter >= 2) {
-                                // Subtitle is officially gone from screen, clear the states
-                                subtitleState.value = "No text detected"
-                                translationState.value = ""
-                                lastSubtitleText = ""
+                            val rootCause = when {
+                                blockCount == 0 -> "ML Kit found 0 text blocks"
+                                rawText.isEmpty() -> "ML Kit raw text is empty"
+                                else -> "Filtered out by rules"
+                            }
+                            Log.w("SubtitleService", "OCR Debug: No valid text. Reason: $rootCause (Raw: '$rawText')")
+                            debugStatusState.value = "No text ($rootCause)"
+                            
+                            if (emptyOcrFramesCounter >= 5) {
+                                subtitleState.value = "No text detected ($rootCause)"
+                                if (!settingsManager.isTranslatorActive) {
+                                    translationState.value = ""
+                                }
                             }
                         }
                     } catch (e: Exception) {
-                        Log.e("SubtitleService", "Error processing OCR vision text blocks", e)
+                        if (upscaled != bitmap) upscaled.recycle()
+                        Log.e("SubtitleService", "OCR Debug: Error in onSuccess", e)
+                        debugStatusState.value = "Error: ${e.localizedMessage}"
                     }
                 }
                 .addOnFailureListener { e ->
-                    Log.e("SubtitleService", "OCR Text recognition failed", e)
-                    subtitleState.value = "No text detected"
-                    translationState.value = "OCR Recognition Error: ${e.localizedMessage}"
+                    if (upscaled != bitmap) upscaled.recycle()
+                    Log.e("SubtitleService", "OCR Debug: ML Kit failure", e)
+                    debugStatusState.value = "ML Kit Error: ${e.localizedMessage}"
+                    emptyOcrFramesCounter++
+                    if (emptyOcrFramesCounter >= 5) {
+                        subtitleState.value = "No text detected (ML Kit Failed)"
+                    }
                 }
         } catch (e: Exception) {
-            Log.e("SubtitleService", "Error running OCR on bitmap", e)
-            subtitleState.value = "No text detected"
-            translationState.value = "OCR Bitmap Error: ${e.localizedMessage}"
+            Log.e("SubtitleService", "OCR Debug: Exception running OCR", e)
+            debugStatusState.value = "Exception: ${e.localizedMessage}"
         }
     }
 
@@ -435,8 +504,7 @@ class SubtitleAccessibilityService : AccessibilityService() {
                     }
 
                     // TTS speak in target language if translation voice is enabled and not muted
-                    // For now, completely ignore Text-to-Speech (audio) as requested for visual debugging
-                    val isVoiceOn = false
+                    val isVoiceOn = settingsManager.isVoiceEnabled && isTranslatingState.value && !isMutedState.value
                     if (isVoiceOn) {
                         try {
                             ttsManager.speak(
@@ -464,15 +532,17 @@ class SubtitleAccessibilityService : AccessibilityService() {
     private fun applyAudioSettings() {
         try {
             val audioManager = getSystemService(Context.AUDIO_SERVICE) as AudioManager
-            // Set STREAM_MUSIC (original video volume) strictly to user's chosen value from the slider
-            val vol = settingsManager.originalVideoVolume
-            audioManager.setStreamVolume(AudioManager.STREAM_MUSIC, vol, 0)
-            
-            // Set STREAM_ACCESSIBILITY (translation voice volume) independently
-            val transVol = settingsManager.translationVoiceVolume
-            val maxAccessVol = audioManager.getStreamMaxVolume(AudioManager.STREAM_ACCESSIBILITY)
-            val targetAccessVol = (transVol * maxAccessVol).toInt().coerceIn(0, maxAccessVol)
-            audioManager.setStreamVolume(AudioManager.STREAM_ACCESSIBILITY, targetAccessVol, 0)
+            // Unmute music stream so video song is audible
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
+                audioManager.adjustStreamVolume(AudioManager.STREAM_MUSIC, AudioManager.ADJUST_UNMUTE, 0)
+                audioManager.adjustStreamVolume(AudioManager.STREAM_MUSIC, AudioManager.ADJUST_RAISE, 0)
+            } else {
+                @Suppress("DEPRECATION")
+                audioManager.setStreamMute(AudioManager.STREAM_MUSIC, false)
+            }
+            val maxVol = audioManager.getStreamMaxVolume(AudioManager.STREAM_MUSIC)
+            val vol = settingsManager.originalVideoVolume.coerceIn(1, maxVol)
+            audioManager.setStreamVolume(AudioManager.STREAM_MUSIC, maxVol, AudioManager.FLAG_SHOW_UI)
             
             val isVoiceOn = settingsManager.isVoiceEnabled && isTranslatingState.value && !isMutedState.value
             if (!isVoiceOn) {
@@ -516,16 +586,12 @@ class SubtitleAccessibilityService : AccessibilityService() {
 
     private fun showSubtitleOverlay() {
         if (subtitleOverlayView != null) return
-        if (!android.provider.Settings.canDrawOverlays(this)) return
 
         try {
             val params = WindowManager.LayoutParams(
                 WindowManager.LayoutParams.MATCH_PARENT,
                 WindowManager.LayoutParams.WRAP_CONTENT,
-                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) 
-                    WindowManager.LayoutParams.TYPE_APPLICATION_OVERLAY 
-                else 
-                    WindowManager.LayoutParams.TYPE_PHONE,
+                WindowManager.LayoutParams.TYPE_ACCESSIBILITY_OVERLAY,
                 WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE or WindowManager.LayoutParams.FLAG_NOT_TOUCHABLE or WindowManager.LayoutParams.FLAG_LAYOUT_IN_SCREEN,
                 PixelFormat.TRANSLUCENT
             ).apply {
@@ -548,7 +614,11 @@ class SubtitleAccessibilityService : AccessibilityService() {
                     SubtitleOverlayContent(
                         subtitleFlow = subtitleState,
                         translationFlow = translationState,
-                        isTranslatingFlow = isTranslatingState
+                        isTranslatingFlow = isTranslatingState,
+                        debugStatusFlow = debugStatusState,
+                        debugRegionSizeFlow = debugRegionSizeState,
+                        debugRegionCoordsFlow = debugRegionCoordsState,
+                        debugCaptureFlow = debugCaptureState
                     )
                 }
             }
@@ -560,8 +630,8 @@ class SubtitleAccessibilityService : AccessibilityService() {
                 addView(composeView)
             }
 
-            subtitleOverlayView = parentLayout
             windowManager?.addView(parentLayout, params)
+            subtitleOverlayView = parentLayout
         } catch (e: Exception) {
             Log.e("SubtitleService", "Error showing subtitle overlay", e)
             subtitleOverlayView = null
@@ -569,11 +639,13 @@ class SubtitleAccessibilityService : AccessibilityService() {
     }
 
     private fun removeSubtitleOverlay() {
-        subtitleOverlayView?.let {
-            try {
-                windowManager?.removeView(it)
-            } catch (e: Exception) {
-                Log.e("SubtitleService", "Error removing subtitle overlay", e)
+        subtitleOverlayView?.let { view ->
+            if (view.isAttachedToWindow) {
+                try {
+                    windowManager?.removeView(view)
+                } catch (e: Exception) {
+                    Log.e("SubtitleService", "Error removing subtitle overlay", e)
+                }
             }
             subtitleOverlayView = null
         }
@@ -581,7 +653,6 @@ class SubtitleAccessibilityService : AccessibilityService() {
 
     private fun showSelectionOverlay() {
         if (selectionOverlayView != null) return
-        if (!android.provider.Settings.canDrawOverlays(this)) return
 
         removeSubtitleOverlay()
 
@@ -589,10 +660,7 @@ class SubtitleAccessibilityService : AccessibilityService() {
             val params = WindowManager.LayoutParams(
                 WindowManager.LayoutParams.MATCH_PARENT,
                 WindowManager.LayoutParams.MATCH_PARENT,
-                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) 
-                    WindowManager.LayoutParams.TYPE_APPLICATION_OVERLAY 
-                else 
-                    WindowManager.LayoutParams.TYPE_PHONE,
+                WindowManager.LayoutParams.TYPE_ACCESSIBILITY_OVERLAY,
                 WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE or WindowManager.LayoutParams.FLAG_LAYOUT_IN_SCREEN or WindowManager.LayoutParams.FLAG_LAYOUT_NO_LIMITS,
                 PixelFormat.TRANSLUCENT
             )
@@ -639,8 +707,8 @@ class SubtitleAccessibilityService : AccessibilityService() {
                 addView(composeView)
             }
 
-            selectionOverlayView = parentLayout
             windowManager?.addView(parentLayout, params)
+            selectionOverlayView = parentLayout
         } catch (e: Exception) {
             Log.e("SubtitleService", "Error showing selection overlay", e)
             selectionOverlayView = null
@@ -651,11 +719,13 @@ class SubtitleAccessibilityService : AccessibilityService() {
     }
 
     private fun removeSelectionOverlay() {
-        selectionOverlayView?.let {
-            try {
-                windowManager?.removeView(it)
-            } catch (e: Exception) {
-                Log.e("SubtitleService", "Error removing selection overlay", e)
+        selectionOverlayView?.let { view ->
+            if (view.isAttachedToWindow) {
+                try {
+                    windowManager?.removeView(view)
+                } catch (e: Exception) {
+                    Log.e("SubtitleService", "Error removing selection overlay", e)
+                }
             }
             selectionOverlayView = null
         }
@@ -671,16 +741,12 @@ class SubtitleAccessibilityService : AccessibilityService() {
 
     private fun showMenuOverlay() {
         if (menuOverlayView != null) return
-        if (!android.provider.Settings.canDrawOverlays(this)) return
 
         try {
             val params = WindowManager.LayoutParams(
                 WindowManager.LayoutParams.MATCH_PARENT,
                 WindowManager.LayoutParams.MATCH_PARENT,
-                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) 
-                    WindowManager.LayoutParams.TYPE_APPLICATION_OVERLAY 
-                else 
-                    WindowManager.LayoutParams.TYPE_PHONE,
+                WindowManager.LayoutParams.TYPE_ACCESSIBILITY_OVERLAY,
                 WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE or WindowManager.LayoutParams.FLAG_LAYOUT_IN_SCREEN,
                 PixelFormat.TRANSLUCENT
             )
@@ -713,6 +779,9 @@ class SubtitleAccessibilityService : AccessibilityService() {
                         onStopTranslation = {
                             stopTranslationSession()
                             removeMenuOverlay()
+                        },
+                        onSkip = {
+                            ttsManager.skip()
                         },
                         onSelectCaptionArea = {
                             showSelectionOverlay()
@@ -751,8 +820,8 @@ class SubtitleAccessibilityService : AccessibilityService() {
                 addView(composeView)
             }
 
-            menuOverlayView = parentLayout
             windowManager?.addView(parentLayout, params)
+            menuOverlayView = parentLayout
         } catch (e: Exception) {
             Log.e("SubtitleService", "Error showing menu overlay", e)
             menuOverlayView = null
@@ -760,11 +829,13 @@ class SubtitleAccessibilityService : AccessibilityService() {
     }
 
     private fun removeMenuOverlay() {
-        menuOverlayView?.let {
-            try {
-                windowManager?.removeView(it)
-            } catch (e: Exception) {
-                Log.e("SubtitleService", "Error removing menu overlay", e)
+        menuOverlayView?.let { view ->
+            if (view.isAttachedToWindow) {
+                try {
+                    windowManager?.removeView(view)
+                } catch (e: Exception) {
+                    Log.e("SubtitleService", "Error removing menu overlay", e)
+                }
             }
             menuOverlayView = null
         }
@@ -1017,11 +1088,19 @@ fun CaptionAreaSelectionScreen(
 fun SubtitleOverlayContent(
     subtitleFlow: StateFlow<String>,
     translationFlow: StateFlow<String>,
-    isTranslatingFlow: StateFlow<Boolean>
+    isTranslatingFlow: StateFlow<Boolean>,
+    debugStatusFlow: StateFlow<String>,
+    debugRegionSizeFlow: StateFlow<String>,
+    debugRegionCoordsFlow: StateFlow<String>,
+    debugCaptureFlow: StateFlow<String>
 ) {
     val subtitle by subtitleFlow.collectAsState()
     val translation by translationFlow.collectAsState()
     val isTranslating by isTranslatingFlow.collectAsState()
+    val debugStatus by debugStatusFlow.collectAsState()
+    val regionSize by debugRegionSizeFlow.collectAsState()
+    val regionCoords by debugRegionCoordsFlow.collectAsState()
+    val captureState by debugCaptureFlow.collectAsState()
 
     if (isTranslating) {
         Box(
@@ -1033,7 +1112,7 @@ fun SubtitleOverlayContent(
             Card(
                 shape = RoundedCornerShape(12.dp),
                 colors = CardDefaults.cardColors(
-                    containerColor = Color(0xFF1B5E20).copy(alpha = 0.9f)
+                    containerColor = Color(0xFF1B5E20).copy(alpha = 0.95f)
                 ),
                 border = BorderStroke(2.dp, Color(0xFF00E676)),
                 modifier = Modifier
@@ -1043,17 +1122,43 @@ fun SubtitleOverlayContent(
                 Column(
                     modifier = Modifier.padding(12.dp),
                     horizontalAlignment = Alignment.CenterHorizontally,
-                    verticalArrangement = Arrangement.spacedBy(8.dp)
+                    verticalArrangement = Arrangement.spacedBy(6.dp)
                 ) {
                     // Header
                     Text(
-                        text = "LIVE TRANSLATOR - DEBUG PIPELINE",
+                        text = "OCR DEBUG PIPELINE",
                         color = Color(0xFFB9F6CA),
                         fontSize = 11.sp,
                         style = androidx.compose.ui.text.TextStyle(
                             fontWeight = FontWeight.Bold,
                             letterSpacing = 1.2.sp
                         )
+                    )
+
+                    // Region Stats Row
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.SpaceBetween
+                    ) {
+                        Text(text = "Size: $regionSize", color = Color(0xFFC8E6C9), fontSize = 11.sp)
+                        Text(text = "Coords: $regionCoords", color = Color(0xFFC8E6C9), fontSize = 11.sp)
+                    }
+
+                    // Capture State Row
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.SpaceBetween
+                    ) {
+                        Text(text = "Capture: $captureState", color = Color(0xFF81C784), fontSize = 11.sp)
+                        Text(text = "Status: $debugStatus", color = Color(0xFFFFD54F), fontSize = 11.sp)
+                    }
+
+                    // Divider
+                    Box(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .height(1.dp)
+                            .background(Color(0xFF2E7D32))
                     )
 
                     // English OCR
@@ -1069,9 +1174,9 @@ fun SubtitleOverlayContent(
                             fontWeight = FontWeight.Bold,
                             modifier = Modifier.width(72.dp)
                         )
-                        val isNoText = subtitle.isEmpty() || subtitle == "No text detected"
+                        val isNoText = subtitle.isEmpty() || subtitle.startsWith("No text detected")
                         Text(
-                            text = if (isNoText) "No text detected" else subtitle,
+                            text = if (isNoText) subtitle.ifEmpty { "No text detected" } else subtitle,
                             color = if (isNoText) Color(0xFFFF8A80) else Color.White,
                             fontSize = 13.sp,
                             fontWeight = FontWeight.Medium,
@@ -1100,7 +1205,7 @@ fun SubtitleOverlayContent(
                             fontWeight = FontWeight.Bold,
                             modifier = Modifier.width(72.dp)
                         )
-                        val isNoText = subtitle.isEmpty() || subtitle == "No text detected"
+                        val isNoText = subtitle.isEmpty() || subtitle.startsWith("No text detected")
                         val displayTranslation = if (translation.startsWith("Translation Error")) {
                             translation
                         } else if (isNoText) {
@@ -1144,6 +1249,7 @@ fun TranslationMenuPopupContent(
     currentMusicVolume: Int,
     onStartTranslation: () -> Unit,
     onStopTranslation: () -> Unit,
+    onSkip: () -> Unit,
     onSelectCaptionArea: () -> Unit,
     onOriginalVolumeChanged: (Int) -> Unit,
     onTranslationVolumeChanged: (Float) -> Unit,
@@ -1256,6 +1362,22 @@ fun TranslationMenuPopupContent(
                     }
                 }
 
+                // Skip Current Dialogue Button
+                Button(
+                    onClick = onSkip,
+                    colors = ButtonDefaults.buttonColors(containerColor = Color(0xFFE65100)),
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .height(40.dp)
+                        .testTag("popup_skip_button"),
+                    shape = RoundedCornerShape(8.dp),
+                    enabled = isTranslating
+                ) {
+                    Icon(imageVector = Icons.Default.SkipNext, contentDescription = "Skip", modifier = Modifier.size(16.dp))
+                    Spacer(modifier = Modifier.width(4.dp))
+                    Text("Skip Current Dialogue", fontSize = 12.sp, fontWeight = FontWeight.Bold, color = Color.White)
+                }
+
                 // Custom Screen Selection
                 Button(
                     onClick = onSelectCaptionArea,
@@ -1281,7 +1403,7 @@ fun TranslationMenuPopupContent(
                         verticalAlignment = Alignment.CenterVertically
                     ) {
                         Row(verticalAlignment = Alignment.CenterVertically) {
-                            Icon(imageVector = Icons.Default.VolumeUp, contentDescription = "Original Vol", tint = Color.LightGray, modifier = Modifier.size(14.dp))
+                            Icon(imageVector = Icons.AutoMirrored.Filled.VolumeUp, contentDescription = "Original Vol", tint = Color.LightGray, modifier = Modifier.size(14.dp))
                             Spacer(modifier = Modifier.width(6.dp))
                             Text("Original Video Volume", fontSize = 12.sp, color = Color.LightGray)
                         }

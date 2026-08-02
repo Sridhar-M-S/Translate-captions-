@@ -34,7 +34,6 @@ fun SettingsScreen(
     var isOverlayEnabled by remember { mutableStateOf(settingsManager.isOverlayEnabled) }
     var isOcrEnabled by remember { mutableStateOf(settingsManager.isOcrEnabled) }
     var ocrSensitivity by remember { mutableStateOf(settingsManager.ocrSensitivity) }
-    var ocrRegion by remember { mutableStateOf(settingsManager.ocrRegion) }
 
     Column(
         modifier = Modifier
@@ -337,63 +336,16 @@ fun SettingsScreen(
                     Divider(color = Color.White.copy(alpha = 0.08f))
 
                     // OCR Scan Region
-                    Column {
-                        Row(
-                            modifier = Modifier.fillMaxWidth(),
-                            horizontalArrangement = Arrangement.SpaceBetween
-                        ) {
-                            Text("OCR Scan Region", fontSize = 13.sp, color = Color.LightGray)
-                            val regionText = when (ocrRegion) {
-                                "full" -> "Full Screen"
-                                "bottom_half" -> "Bottom Half"
-                                "bottom_third" -> "Bottom 1/3"
-                                "top_half" -> "Top Half"
-                                else -> "Full Screen"
-                            }
-                            Text(regionText, fontSize = 13.sp, fontWeight = FontWeight.Bold, color = Color(0xFF00C853))
-                        }
-                        Spacer(modifier = Modifier.height(4.dp))
-                        Row(
-                            modifier = Modifier.fillMaxWidth(),
-                            horizontalArrangement = Arrangement.spacedBy(8.dp)
-                        ) {
-                            LanguageChip(
-                                name = "Full Screen",
-                                code = "full",
-                                isSelected = ocrRegion == "full",
-                                onSelect = {
-                                    ocrRegion = "full"
-                                    settingsManager.ocrRegion = "full"
-                                }
-                            )
-                            LanguageChip(
-                                name = "1/2 Bottom",
-                                code = "bottom_half",
-                                isSelected = ocrRegion == "bottom_half",
-                                onSelect = {
-                                    ocrRegion = "bottom_half"
-                                    settingsManager.ocrRegion = "bottom_half"
-                                }
-                            )
-                            LanguageChip(
-                                name = "1/3 Bottom",
-                                code = "bottom_third",
-                                isSelected = ocrRegion == "bottom_third",
-                                onSelect = {
-                                    ocrRegion = "bottom_third"
-                                    settingsManager.ocrRegion = "bottom_third"
-                                }
-                            )
-                            LanguageChip(
-                                name = "Top Half",
-                                code = "top_half",
-                                isSelected = ocrRegion == "top_half",
-                                onSelect = {
-                                    ocrRegion = "top_half"
-                                    settingsManager.ocrRegion = "top_half"
-                                }
-                            )
-                        }
+                    Column(
+                        modifier = Modifier.fillMaxWidth(),
+                        verticalArrangement = Arrangement.spacedBy(4.dp)
+                    ) {
+                        Text("OCR Scan Region", fontSize = 13.sp, color = Color.LightGray)
+                        Text(
+                            "Custom Screen Selection is used as the exact OCR scan region. Draw and confirm your rectangle selection on screen to scan subtitles only within that region.",
+                            fontSize = 12.sp,
+                            color = Color.Gray
+                        )
                     }
                 }
             }

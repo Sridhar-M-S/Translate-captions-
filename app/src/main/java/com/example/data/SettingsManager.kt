@@ -15,7 +15,6 @@ class SettingsManager(context: Context) {
         private const val KEY_OCR_SENSITIVITY = "ocr_sensitivity"
         private const val KEY_OCR_ENABLED = "ocr_enabled"
         private const val KEY_TRANSLATOR_ACTIVE = "translator_active"
-        private const val KEY_OCR_REGION = "ocr_region"
     }
 
     var targetLanguage: String
@@ -46,29 +45,25 @@ class SettingsManager(context: Context) {
         get() = prefs.getBoolean(KEY_OCR_ENABLED, true) // Enable by default as standard fallback
         set(value) = prefs.edit().putBoolean(KEY_OCR_ENABLED, value).apply()
 
-    var ocrRegion: String
-        get() = prefs.getString(KEY_OCR_REGION, "full") ?: "full"
-        set(value) = prefs.edit().putString(KEY_OCR_REGION, value).apply()
-
     var isTranslatorActive: Boolean
         get() = prefs.getBoolean(KEY_TRANSLATOR_ACTIVE, false)
         set(value) = prefs.edit().putBoolean(KEY_TRANSLATOR_ACTIVE, value).apply()
 
-    // Custom capture rectangle coordinates
+    // Custom capture rectangle coordinates (Custom Screen Selection = OCR Scan Region)
     var customRectLeft: Float
-        get() = prefs.getFloat("custom_rect_left", 0.05f)
+        get() = prefs.getFloat("custom_rect_left", 0.0f)
         set(value) = prefs.edit().putFloat("custom_rect_left", value).apply()
 
     var customRectTop: Float
-        get() = prefs.getFloat("custom_rect_top", 0.70f)
+        get() = prefs.getFloat("custom_rect_top", 0.0f)
         set(value) = prefs.edit().putFloat("custom_rect_top", value).apply()
 
     var customRectRight: Float
-        get() = prefs.getFloat("custom_rect_right", 0.95f)
+        get() = prefs.getFloat("custom_rect_right", 1.0f)
         set(value) = prefs.edit().putFloat("custom_rect_right", value).apply()
 
     var customRectBottom: Float
-        get() = prefs.getFloat("custom_rect_bottom", 0.88f)
+        get() = prefs.getFloat("custom_rect_bottom", 1.0f)
         set(value) = prefs.edit().putFloat("custom_rect_bottom", value).apply()
 
     // Independent Audio Modes (Mode A vs Mode B)

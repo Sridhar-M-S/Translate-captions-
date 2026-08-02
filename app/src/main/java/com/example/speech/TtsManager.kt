@@ -45,7 +45,14 @@ class TtsManager(private val context: Context) : TextToSpeech.OnInitListener {
                 "te" -> Locale("te", "IN")
                 else -> Locale(languageCode)
             }
-            tts?.setLanguage(locale)
+            val langResult = tts?.setLanguage(locale)
+            if (langResult == TextToSpeech.LANG_MISSING_DATA || langResult == TextToSpeech.LANG_NOT_SUPPORTED || langResult == null) {
+                Log.w("TtsManager", "Language $languageCode missing data or not supported. Falling back to default locale.")
+                val fallbackResult = tts?.setLanguage(Locale.getDefault())
+                if (fallbackResult == TextToSpeech.LANG_MISSING_DATA || fallbackResult == TextToSpeech.LANG_NOT_SUPPORTED) {
+                    tts?.setLanguage(Locale.US)
+                }
+            }
             
             // Try to set high-quality voice based on requested gender if available
             val voices = tts?.voices
@@ -74,16 +81,22 @@ class TtsManager(private val context: Context) : TextToSpeech.OnInitListener {
                 }
             }
 
-            // Set translation voice volume relative multiplier
+            // Set translation voice volume relative multiplier and stream (using STREAM_MUSIC for reliable TTS audio playback)
             val params = android.os.Bundle().apply {
-                putString(TextToSpeech.Engine.KEY_PARAM_VOLUME, "1.0") // Keep full relative volume, stream master handles it
-                // Use STREAM_ACCESSIBILITY so we can mute stream_music without muting translation
-                putInt(TextToSpeech.Engine.KEY_PARAM_STREAM, android.media.AudioManager.STREAM_ACCESSIBILITY)
+                putFloat(TextToSpeech.Engine.KEY_PARAM_VOLUME, volume)
+                putString(TextToSpeech.Engine.KEY_PARAM_VOLUME, volume.toString())
+                putInt(TextToSpeech.Engine.KEY_PARAM_STREAM, android.media.AudioManager.STREAM_MUSIC)
             }
 
-            tts?.speak(text, TextToSpeech.QUEUE_FLUSH, params, "LiveSubtitleTr")
+            tts?.speak(text, TextToSpeech.QUEUE_ADD, params, "LiveSubtitleTr")
         } catch (e: Exception) {
             Log.e("TtsManager", "Error speaking text", e)
+        }
+    }
+
+    fun skip() {
+        if (isInitialized) {
+            tts?.stop()
         }
     }
 

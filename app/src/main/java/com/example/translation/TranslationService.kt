@@ -20,11 +20,26 @@ class TranslationService {
         .build()
 
     /**
+     * Removes emojis, musical notes, and non-dialogue decorative symbols from caption text.
+     */
+    fun cleanDialogue(text: String): String {
+        return text.replace(Regex("[\\p{So}\\p{Cs}\\p{Cn}\\p{Cf}\\p{Co}\\p{Symbol}]"), "")
+            .replace(Regex("[♪♫♬♩♥★♦♣♠➔→←↔▲▼◄►■□▪▫•●○#\\[\\]{}]"), "")
+            .replace(Regex("\\s+"), " ")
+            .trim()
+    }
+
+    /**
      * Translates the given text into the target language using Google's free translation API.
      */
     suspend fun translateGoogle(text: String, targetLanguage: String): TranslationResult = withContext(Dispatchers.IO) {
         try {
-            val encodedText = URLEncoder.encode(text, "UTF-8")
+            val cleanedText = cleanDialogue(text)
+            if (cleanedText.isEmpty()) {
+                return@withContext TranslationResult.Success(text, "", "auto")
+            }
+
+            val encodedText = URLEncoder.encode(cleanedText, "UTF-8")
             val url = "https://translate.googleapis.com/translate_a/single?client=gtx&sl=auto&tl=$targetLanguage&dt=t&q=$encodedText"
 
             val request = Request.Builder()
@@ -72,6 +87,11 @@ class TranslationService {
      * Translates using the Gemini API via direct HTTP calls to remain 100% stable and crash-free.
      */
     suspend fun translateGemini(text: String, targetLanguage: String): TranslationResult = withContext(Dispatchers.IO) {
+        val cleanedText = cleanDialogue(text)
+        if (cleanedText.isEmpty()) {
+            return@withContext TranslationResult.Success(text, "", "auto")
+        }
+
         val apiKey = com.example.BuildConfig.GEMINI_API_KEY
         if (apiKey.isEmpty() || apiKey == "MY_GEMINI_API_KEY") {
             Log.d("TranslationService", "No Gemini key, falling back to Google Translate")
@@ -91,10 +111,11 @@ class TranslationService {
             }
 
             val prompt = """
-                Translate the following movie/video subtitle text into extremely natural, conversational, and contextually accurate $langName. 
-                Do NOT output any explanations, tags, notes, or original text. ONLY output the translated text.
+                Translate the following movie/video subtitle dialogue into extremely natural, conversational, and contextually accurate $langName. 
+                Ignore any emojis, symbols, or non-dialogue characters if present. 
+                Do NOT output any explanations, tags, notes, or original text. ONLY output the translated dialogue text.
                 
-                Subtitle: "$text"
+                Subtitle: "$cleanedText"
             """.trimIndent()
 
             // JSON Request Body

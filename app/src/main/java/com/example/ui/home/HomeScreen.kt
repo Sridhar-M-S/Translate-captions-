@@ -46,7 +46,6 @@ fun HomeScreen(
 ) {
     val context = LocalContext.current
     var hasAccessibilityPermission by remember { mutableStateOf(isAccessibilityServiceEnabled(context, SubtitleAccessibilityService::class.java)) }
-    var hasOverlayPermission by remember { mutableStateOf(Settings.canDrawOverlays(context)) }
 
     val audioManager = remember { context.getSystemService(Context.AUDIO_SERVICE) as AudioManager }
     val maxMusicVolume = remember { audioManager.getStreamMaxVolume(AudioManager.STREAM_MUSIC) }
@@ -62,7 +61,6 @@ fun HomeScreen(
         val observer = LifecycleEventObserver { _, event ->
             if (event == Lifecycle.Event.ON_RESUME) {
                 hasAccessibilityPermission = isAccessibilityServiceEnabled(context, SubtitleAccessibilityService::class.java)
-                hasOverlayPermission = Settings.canDrawOverlays(context)
             }
         }
         lifecycleOwner.lifecycle.addObserver(observer)
@@ -74,7 +72,6 @@ fun HomeScreen(
     // Refresh permissions when screen is visible
     LaunchedEffect(Unit) {
         hasAccessibilityPermission = isAccessibilityServiceEnabled(context, SubtitleAccessibilityService::class.java)
-        hasOverlayPermission = Settings.canDrawOverlays(context)
     }
 
     Column(
@@ -161,22 +158,6 @@ fun HomeScreen(
                     isGranted = hasAccessibilityPermission,
                     onRequestGrant = {
                         val intent = Intent(Settings.ACTION_ACCESSIBILITY_SETTINGS)
-                        context.startActivity(intent)
-                    }
-                )
-
-                Divider(color = Color.White.copy(alpha = 0.08f))
-
-                // 2. Draw over other apps permission row
-                PermissionRow(
-                    title = "Display Over Other Apps",
-                    description = "Required to show translated subtitle overlay",
-                    isGranted = hasOverlayPermission,
-                    onRequestGrant = {
-                        val intent = Intent(
-                            Settings.ACTION_MANAGE_OVERLAY_PERMISSION,
-                            Uri.parse("package:${context.packageName}")
-                        )
                         context.startActivity(intent)
                     }
                 )

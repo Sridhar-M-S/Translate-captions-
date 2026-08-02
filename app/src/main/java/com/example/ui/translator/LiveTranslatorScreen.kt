@@ -6,6 +6,7 @@ import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.*
+import androidx.compose.material.icons.automirrored.filled.*
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
@@ -161,7 +162,7 @@ fun LiveTranslatorScreen(
                             if (isTranslating) {
                                 CircularProgressIndicator(modifier = Modifier.size(16.dp), color = Color.White, strokeWidth = 2.dp)
                             } else {
-                                Icon(imageVector = Icons.Default.VolumeUp, contentDescription = "Translate")
+                                Icon(imageVector = Icons.AutoMirrored.Filled.VolumeUp, contentDescription = "Translate")
                                 Spacer(modifier = Modifier.width(6.dp))
                                 Text("Speak Tamil", fontWeight = FontWeight.Bold)
                             }
