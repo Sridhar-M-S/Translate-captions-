@@ -388,11 +388,25 @@ class SubtitleAccessibilityService : AccessibilityService() {
                 if (lineText.length >= 1) {
                     val lower = lineText.lowercase(Locale.ROOT)
                     if (!lower.contains("visit advertiser") &&
-                        !lower.contains("skip") &&
+                        !lower.contains("skip ad") &&
                         !lower.contains("sponsored") &&
                         !lower.contains("subscribe") &&
                         !lower.contains("comments") &&
-                        !lower.contains("live translator")
+                        !lower.contains("live translator") &&
+                        !lower.contains("share") &&
+                        !lower.contains("like") &&
+                        !lower.contains("dislike") &&
+                        !lower.contains("save") &&
+                        !lower.contains("download") &&
+                        !lower.contains("playlist") &&
+                        !lower.contains("autoplay") &&
+                        !lower.contains("home") &&
+                        !lower.contains("shorts") &&
+                        !lower.contains("subscriptions") &&
+                        !lower.contains("library") &&
+                        !lower.contains("channel") &&
+                        !lower.matches(Regex(".*\\d{1,2}:\\d{2}\\s*/\\s*\\d{1,2}:\\d{2}.*")) && // Timestamp 0:00 / 3:45
+                        !lower.matches(Regex(".*\\d+\\s*(views|subscribers|likes).*"))
                     ) {
                         lines.add(lineText)
                     }
@@ -1102,6 +1116,8 @@ fun SubtitleOverlayContent(
     val regionCoords by debugRegionCoordsFlow.collectAsState()
     val captureState by debugCaptureFlow.collectAsState()
 
+    var isMinimized by remember { mutableStateOf(false) }
+
     if (isTranslating) {
         Box(
             modifier = Modifier
@@ -1120,79 +1136,100 @@ fun SubtitleOverlayContent(
                     .padding(4.dp)
             ) {
                 Column(
-                    modifier = Modifier.padding(12.dp),
+                    modifier = Modifier.padding(10.dp),
                     horizontalAlignment = Alignment.CenterHorizontally,
-                    verticalArrangement = Arrangement.spacedBy(6.dp)
+                    verticalArrangement = Arrangement.spacedBy(4.dp)
                 ) {
-                    // Header
-                    Text(
-                        text = "OCR DEBUG PIPELINE",
-                        color = Color(0xFFB9F6CA),
-                        fontSize = 11.sp,
-                        style = androidx.compose.ui.text.TextStyle(
-                            fontWeight = FontWeight.Bold,
-                            letterSpacing = 1.2.sp
-                        )
-                    )
-
-                    // Region Stats Row
+                    // Header with Minimize/Expand Button
                     Row(
                         modifier = Modifier.fillMaxWidth(),
-                        horizontalArrangement = Arrangement.SpaceBetween
-                    ) {
-                        Text(text = "Size: $regionSize", color = Color(0xFFC8E6C9), fontSize = 11.sp)
-                        Text(text = "Coords: $regionCoords", color = Color(0xFFC8E6C9), fontSize = 11.sp)
-                    }
-
-                    // Capture State Row
-                    Row(
-                        modifier = Modifier.fillMaxWidth(),
-                        horizontalArrangement = Arrangement.SpaceBetween
-                    ) {
-                        Text(text = "Capture: $captureState", color = Color(0xFF81C784), fontSize = 11.sp)
-                        Text(text = "Status: $debugStatus", color = Color(0xFFFFD54F), fontSize = 11.sp)
-                    }
-
-                    // Divider
-                    Box(
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .height(1.dp)
-                            .background(Color(0xFF2E7D32))
-                    )
-
-                    // English OCR
-                    Row(
-                        modifier = Modifier.fillMaxWidth(),
-                        horizontalArrangement = Arrangement.spacedBy(8.dp),
-                        verticalAlignment = Alignment.Top
+                        horizontalArrangement = Arrangement.SpaceBetween,
+                        verticalAlignment = Alignment.CenterVertically
                     ) {
                         Text(
-                            text = "OCR [EN]:",
-                            color = Color(0xFFE8F5E9),
-                            fontSize = 12.sp,
-                            fontWeight = FontWeight.Bold,
-                            modifier = Modifier.width(72.dp)
+                            text = if (isMinimized) "OCR SUBTITLES (Minimized)" else "OCR DEBUG PIPELINE",
+                            color = Color(0xFFB9F6CA),
+                            fontSize = 11.sp,
+                            style = androidx.compose.ui.text.TextStyle(
+                                fontWeight = FontWeight.Bold,
+                                letterSpacing = 1.2.sp
+                            )
                         )
-                        val isNoText = subtitle.isEmpty() || subtitle.startsWith("No text detected")
-                        Text(
-                            text = if (isNoText) subtitle.ifEmpty { "No text detected" } else subtitle,
-                            color = if (isNoText) Color(0xFFFF8A80) else Color.White,
-                            fontSize = 13.sp,
-                            fontWeight = FontWeight.Medium,
-                            modifier = Modifier.weight(1f)
+                        IconButton(
+                            onClick = { isMinimized = !isMinimized },
+                            modifier = Modifier
+                                .size(28.dp)
+                                .testTag("minimize_debug_button")
+                        ) {
+                            Icon(
+                                imageVector = if (isMinimized) Icons.Default.KeyboardArrowDown else Icons.Default.KeyboardArrowUp,
+                                contentDescription = if (isMinimized) "Expand" else "Minimize",
+                                tint = Color(0xFF00E676),
+                                modifier = Modifier.size(18.dp)
+                            )
+                        }
+                    }
+
+                    if (!isMinimized) {
+                        // Region Stats Row
+                        Row(
+                            modifier = Modifier.fillMaxWidth(),
+                            horizontalArrangement = Arrangement.SpaceBetween
+                        ) {
+                            Text(text = "Size: $regionSize", color = Color(0xFFC8E6C9), fontSize = 10.sp)
+                            Text(text = "Coords: $regionCoords", color = Color(0xFFC8E6C9), fontSize = 10.sp)
+                        }
+
+                        // Capture State Row
+                        Row(
+                            modifier = Modifier.fillMaxWidth(),
+                            horizontalArrangement = Arrangement.SpaceBetween
+                        ) {
+                            Text(text = "Capture: $captureState", color = Color(0xFF81C784), fontSize = 10.sp)
+                            Text(text = "Status: $debugStatus", color = Color(0xFFFFD54F), fontSize = 10.sp)
+                        }
+
+                        // Divider
+                        Box(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .height(1.dp)
+                                .background(Color(0xFF2E7D32))
+                        )
+
+                        // English OCR
+                        Row(
+                            modifier = Modifier.fillMaxWidth(),
+                            horizontalArrangement = Arrangement.spacedBy(8.dp),
+                            verticalAlignment = Alignment.Top
+                        ) {
+                            Text(
+                                text = "OCR [EN]:",
+                                color = Color(0xFFE8F5E9),
+                                fontSize = 11.sp,
+                                fontWeight = FontWeight.Bold,
+                                modifier = Modifier.width(68.dp)
+                            )
+                            val isNoText = subtitle.isEmpty() || subtitle.startsWith("No text detected")
+                            Text(
+                                text = if (isNoText) subtitle.ifEmpty { "No text detected" } else subtitle,
+                                color = if (isNoText) Color(0xFFFF8A80) else Color.White,
+                                fontSize = 12.sp,
+                                fontWeight = FontWeight.Medium,
+                                modifier = Modifier.weight(1f)
+                            )
+                        }
+
+                        // Divider
+                        Box(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .height(1.dp)
+                                .background(Color(0xFF2E7D32))
                         )
                     }
 
-                    // Divider
-                    Box(
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .height(1.dp)
-                            .background(Color(0xFF2E7D32))
-                    )
-
-                    // Tamil Translation
+                    // Tamil Translation (always visible even when minimized for clean viewing)
                     Row(
                         modifier = Modifier.fillMaxWidth(),
                         horizontalArrangement = Arrangement.spacedBy(8.dp),
@@ -1203,7 +1240,7 @@ fun SubtitleOverlayContent(
                             color = Color(0xFFE8F5E9),
                             fontSize = 12.sp,
                             fontWeight = FontWeight.Bold,
-                            modifier = Modifier.width(72.dp)
+                            modifier = Modifier.width(68.dp)
                         )
                         val isNoText = subtitle.isEmpty() || subtitle.startsWith("No text detected")
                         val displayTranslation = if (translation.startsWith("Translation Error")) {
@@ -1226,7 +1263,7 @@ fun SubtitleOverlayContent(
                         Text(
                             text = displayTranslation,
                             color = textColor,
-                            fontSize = 15.sp,
+                            fontSize = if (isMinimized) 14.sp else 15.sp,
                             fontWeight = FontWeight.Bold,
                             modifier = Modifier.weight(1f)
                         )
