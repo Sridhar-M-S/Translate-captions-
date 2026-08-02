@@ -312,11 +312,18 @@ class SubtitleAccessibilityService : AccessibilityService() {
                             val bitmap = Bitmap.wrapHardwareBuffer(buffer, colorSpace)
 
                             if (bitmap != null) {
-                                val softwareBitmap = bitmap.copy(Bitmap.Config.ARGB_8888, false)
+                                val softwareBitmap = try {
+                                    bitmap.copy(Bitmap.Config.ARGB_8888, false)
+                                } catch (e: Exception) {
+                                    Log.e("SubtitleService", "Failed to copy hardware bitmap", e)
+                                    null
+                                }
+                                bitmap.recycle()
                                 buffer.close()
                                 
-                                val width = softwareBitmap.width
-                                val height = softwareBitmap.height
+                                if (softwareBitmap != null) {
+                                    val width = softwareBitmap.width
+                                    val height = softwareBitmap.height
                                 
                                 val lPct = settingsManager.customRectLeft
                                 val tPct = settingsManager.customRectTop
@@ -366,7 +373,8 @@ class SubtitleAccessibilityService : AccessibilityService() {
                                     runOcrOnBitmap(softwareBitmap)
                                 }
                                 softwareBitmap.recycle()
-                            } else {
+                            }
+                        } else {
                                 Log.e("SubtitleService", "OCR Debug: Wrapped hardware bitmap is null!")
                                 debugCaptureState.value = "Hardware bitmap is null"
                                 buffer.close()
@@ -398,7 +406,7 @@ class SubtitleAccessibilityService : AccessibilityService() {
         for (block in visionText.textBlocks) {
             for (line in block.lines) {
                 val lineText = line.text.trim()
-                if (lineText.length >= 1) {
+                if (lineText.length >= 1 && lineText.any { it.isLetterOrDigit() }) {
                     val lower = lineText.lowercase(Locale.ROOT)
                     if (!lower.contains("visit advertiser") &&
                         !lower.contains("skip ad") &&
