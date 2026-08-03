@@ -97,6 +97,11 @@ class SubtitleAccessibilityService : AccessibilityService() {
     private var detectedLanguage = "en"
     private var emptyOcrFramesCounter = 0
 
+    // Subtitle Deduplication & Rolling Buffer
+    private var previousSubtitleText = ""
+    private var lastSubtitleTimeMs = 0L
+    private val subtitleRollingBuffer = mutableListOf<String>()
+
     private var windowManager: WindowManager? = null
 
     // Subtitle and selection overlay views
@@ -401,93 +406,102 @@ class SubtitleAccessibilityService : AccessibilityService() {
         }
     }
 
-    private fun isValidWord(word: String): Boolean {
-        val trimmed = word.trim()
-        if (trimmed.isEmpty()) return false
+    private val ocrHistory = mutableListOf<String>()
 
-        // Rule 1: Remove random Unicode garbage characters (only allow ASCII letters, numbers, standard punctuation)
-        if (trimmed.any { it.code > 127 || (!it.isLetterOrDigit() && !". , ? ! ' \" - :".contains(it)) }) {
-            return false
-        }
+    private val videoControlsBlacklist = listOf(
+        "play", "pause", "minimize", "subtitles", "audio dubbed", "settings",
+        "timeline", "seek bar", "buttons", "icons", "share", "download", "save",
+        "like", "dislike", "subscribe", "comments", "autoplay", "home", "shorts",
+        "subscriptions", "library", "channel", "visit advertiser", "skip ad",
+        "sponsored", "live translator", "speed", "quality", "fullscreen", "cast", "cc"
+    )
 
-        // If pure symbols/punctuation (e.g. ###, %%%)
-        if (trimmed.all { !it.isLetterOrDigit() }) {
-            return false
-        }
+    private val commonEnglishWords = setOf(
+        "the", "be", "to", "of", "and", "a", "in", "that", "have", "i", "it", "for", "not", "on", "with", "he", "as", "you", "do", "at",
+        "this", "but", "his", "by", "from", "they", "we", "say", "her", "she", "or", "an", "will", "my", "one", "all", "would", "there",
+        "their", "what", "so", "up", "out", "if", "about", "who", "get", "which", "go", "me", "when", "make", "can", "like", "time", "no",
+        "just", "him", "know", "take", "people", "into", "year", "your", "good", "some", "could", "them", "see", "other", "than", "then",
+        "now", "look", "only", "come", "its", "over", "think", "also", "back", "use", "two", "how", "our", "work", "first", "well", "way",
+        "even", "new", "want", "because", "any", "these", "give", "day", "most", "us", "is", "was", "are", "were", "been", "has", "had",
+        "does", "did", "doing", "am", "saying", "said", "hello", "hi", "yes", "please", "thank", "thanks", "great", "good", "morning",
+        "night", "welcome", "friend", "life", "world", "man", "woman", "child", "house", "room", "school", "water", "food", "family",
+        "mother", "father", "brother", "sister", "love", "hate", "happy", "sad", "angry", "smile", "laugh", "cry", "run", "walk", "talk",
+        "listen", "hear", "see", "watch", "read", "write", "learn", "teach", "student", "teacher", "doctor", "hospital", "money", "price",
+        "car", "bus", "train", "plane", "flight", "trip", "travel", "city", "town", "village", "country", "state", "road", "street",
+        "door", "window", "table", "chair", "bed", "phone", "computer", "screen", "movie", "film", "song", "music", "dance", "play",
+        "game", "sport", "ball", "team", "win", "lose", "score", "match", "race", "fast", "slow", "hot", "cold", "warm", "cool", "rain",
+        "snow", "sun", "moon", "star", "sky", "earth", "fire", "wind", "air", "tree", "flower", "grass", "animal", "dog", "cat", "bird",
+        "fish", "horse", "cow", "pig", "sheep", "lion", "tiger", "bear", "monkey", "elephant", "rabbit", "snake", "spider", "insect"
+    )
 
-        val len = trimmed.length
-
-        // Rule 4: Ignore words where more than 40% of characters are digits or symbols
-        val nonLetterCount = trimmed.count { !it.isLetter() }
-        if (nonLetterCount.toDouble() / len > 0.4) {
-            return false
-        }
-
-        // Rule 3: Ignore words containing many symbols (more than 2 symbols or symbol ratio > 30%)
-        val symbolCount = trimmed.count { !it.isLetterOrDigit() && !it.isWhitespace() }
-        if (symbolCount > 2 || (symbolCount.toDouble() / len > 0.3)) {
-            return false
-        }
-
-        // Rule 2 & 6: Isolated letters mixed with numbers or non-words (e.g. 5I, 1O, or gibberish like Gsiu, Geuw with 0 vowels)
-        val lettersOnly = trimmed.filter { it.isLetter() }
-        if (lettersOnly.isNotEmpty()) {
-            val lowerLetters = lettersOnly.lowercase(Locale.ROOT)
-            val vowels = lowerLetters.count { it == 'a' || it == 'e' || it == 'i' || it == 'o' || it == 'u' || it == 'y' }
-            // If length >= 3 and 0 vowels, it's gibberish (e.g. Gsiu, Geuw)
-            if (lettersOnly.length >= 3 && vowels == 0) {
-                return false
-            }
-            // Single letter must be 'a' or 'i'
-            if (lettersOnly.length == 1 && lowerLetters != "a" && lowerLetters != "i") {
-                return false
-            }
-        }
-
+    private fun isDictionaryWord(word: String): Boolean {
         return true
     }
 
+    private fun calculateTextSimilarity(s1: String, s2: String): Double {
+        return 1.0
+    }
+
+    private fun isValidWord(word: String): Boolean {
+        val trimmed = word.trim()
+        if (trimmed.isEmpty()) return false
+        // Allow letters, numbers, and standard punctuation
+        if (trimmed.all { !it.isLetterOrDigit() }) {
+            return false
+        }
+        return true
+    }
+
+    private fun processStabilizedOcr(rawExtractedText: String): String? {
+        val cleaned = rawExtractedText.trim()
+        if (cleaned.isEmpty()) return null
+
+        val lowerCleaned = cleaned.lowercase(Locale.ROOT)
+        for (ctrl in videoControlsBlacklist) {
+            if (lowerCleaned.contains(ctrl)) {
+                return null
+            }
+        }
+
+        // Return extracted text immediately without multi-frame drop or strict filtering
+        return cleaned
+    }
+
     private fun extractTextFromVision(visionText: com.google.mlkit.vision.text.Text): String {
-        val validLines = mutableListOf<String>()
+        val lines = mutableListOf<String>()
         for (block in visionText.textBlocks) {
             for (line in block.lines) {
                 val lineText = line.text.trim()
-                if (lineText.isEmpty()) continue
-
-                val lower = lineText.lowercase(Locale.ROOT)
-                if (!lower.contains("visit advertiser") &&
-                    !lower.contains("skip ad") &&
-                    !lower.contains("sponsored") &&
-                    !lower.contains("subscribe") &&
-                    !lower.contains("comments") &&
-                    !lower.contains("live translator") &&
-                    !lower.contains("share") &&
-                    !lower.contains("like") &&
-                    !lower.contains("dislike") &&
-                    !lower.contains("save") &&
-                    !lower.contains("download") &&
-                    !lower.contains("playlist") &&
-                    !lower.contains("autoplay") &&
-                    !lower.contains("home") &&
-                    !lower.contains("shorts") &&
-                    !lower.contains("subscriptions") &&
-                    !lower.contains("library") &&
-                    !lower.contains("channel") &&
-                    !lower.matches(Regex(".*\\d{1,2}:\\d{2}\\s*/\\s*\\d{1,2}:\\d{2}.*")) &&
-                    !lower.matches(Regex(".*\\d+\\s*(views|subscribers|likes).*"))
-                ) {
-                    val words = lineText.split(Regex("\\s+"))
-                    val validWords = words.filter { isValidWord(it) }
-                    if (validWords.isNotEmpty() && validWords.size >= (words.size / 2.0)) {
-                        validLines.add(validWords.joinToString(" "))
+                if (lineText.length >= 1 && lineText.any { it.isLetterOrDigit() }) {
+                    val lower = lineText.lowercase(Locale.ROOT)
+                    if (!lower.contains("visit advertiser") &&
+                        !lower.contains("skip ad") &&
+                        !lower.contains("sponsored") &&
+                        !lower.contains("subscribe") &&
+                        !lower.contains("comments") &&
+                        !lower.contains("live translator") &&
+                        !lower.contains("share") &&
+                        !lower.contains("like") &&
+                        !lower.contains("dislike") &&
+                        !lower.contains("save") &&
+                        !lower.contains("download") &&
+                        !lower.contains("playlist") &&
+                        !lower.contains("autoplay") &&
+                        !lower.contains("home") &&
+                        !lower.contains("shorts") &&
+                        !lower.contains("subscriptions") &&
+                        !lower.contains("library") &&
+                        !lower.contains("channel") &&
+                        !lower.matches(Regex(".*\\d{1,2}:\\d{2}\\s*/\\s*\\d{1,2}:\\d{2}.*")) && // Timestamp 0:00 / 3:45
+                        !lower.matches(Regex(".*\\d+\\s*(views|subscribers|likes).*"))
+                    ) {
+                        lines.add(lineText)
                     }
                 }
             }
         }
-        if (validLines.isEmpty()) return ""
-        val combined = validLines.joinToString(" ").trim()
-        if (!combined.any { it.isLetter() }) return ""
-        return combined
+        if (lines.isEmpty()) return ""
+        return lines.joinToString(" ").trim()
     }
 
     private fun runOcrOnBitmap(bitmap: Bitmap) {
@@ -511,24 +525,21 @@ class SubtitleAccessibilityService : AccessibilityService() {
                         Log.d("SubtitleService", "OCR Debug: ML Kit processed. Blocks: $blockCount, Raw text: '$rawText'")
                         
                         val combinedText = extractTextFromVision(visionText)
-                        Log.d("SubtitleService", "OCR Debug: Filtered text: '$combinedText'")
+                        val stabilizedText = processStabilizedOcr(combinedText)
+                        Log.d("SubtitleService", "OCR Debug: Filtered text: '$combinedText', Stabilized: '$stabilizedText'")
                         
-                        if (combinedText.isNotEmpty()) {
+                        if (stabilizedText != null) {
                             emptyOcrFramesCounter = 0
-                            debugStatusState.value = "Success: '$combinedText'"
-                            processNewSubtitle(combinedText)
+                            debugStatusState.value = "OCR: '$stabilizedText'"
+                            processNewSubtitle(stabilizedText)
                         } else {
                             emptyOcrFramesCounter++
-                            val rootCause = when {
-                                blockCount == 0 -> "ML Kit found 0 text blocks"
-                                rawText.isEmpty() -> "ML Kit raw text is empty"
-                                else -> "Filtered out by rules"
-                            }
-                            Log.w("SubtitleService", "OCR Debug: No valid text. Reason: $rootCause (Raw: '$rawText')")
-                            debugStatusState.value = "No text ($rootCause)"
+                            debugStatusState.value = "Waiting for text..."
                             
-                            if (emptyOcrFramesCounter >= 5) {
-                                subtitleState.value = "No text detected ($rootCause)"
+                            val now = System.currentTimeMillis()
+                            if (now - lastSubtitleTimeMs > 2000L) {
+                                resetSubtitleHistory()
+                                subtitleState.value = "No subtitle detected"
                                 if (!settingsManager.isTranslatorActive) {
                                     translationState.value = ""
                                 }
@@ -545,7 +556,9 @@ class SubtitleAccessibilityService : AccessibilityService() {
                     Log.e("SubtitleService", "OCR Debug: ML Kit failure", e)
                     debugStatusState.value = "ML Kit Error: ${e.localizedMessage}"
                     emptyOcrFramesCounter++
-                    if (emptyOcrFramesCounter >= 5) {
+                    val now = System.currentTimeMillis()
+                    if (now - lastSubtitleTimeMs > 2000L) {
+                        resetSubtitleHistory()
                         subtitleState.value = "No text detected (ML Kit Failed)"
                     }
                 }
@@ -555,21 +568,139 @@ class SubtitleAccessibilityService : AccessibilityService() {
         }
     }
 
+    private fun resetSubtitleHistory() {
+        previousSubtitleText = ""
+        subtitleRollingBuffer.clear()
+    }
+
+    private fun extractCommonWordPrefixLength(s1: String, s2: String): Int {
+        if (s1.isBlank() || s2.isBlank()) return 0
+        val w1 = s1.lowercase(Locale.ROOT).split(Regex("\\s+")).filter { it.isNotBlank() }
+        val w2 = s2.lowercase(Locale.ROOT).split(Regex("\\s+")).filter { it.isNotBlank() }
+        var count = 0
+        while (count < w1.size && count < w2.size) {
+            val p1 = w1[count].replace(Regex("[^a-zA-Z0-9]"), "")
+            val p2 = w2[count].replace(Regex("[^a-zA-Z0-9]"), "")
+            if (p1 == p2 && p1.isNotEmpty()) {
+                count++
+            } else {
+                break
+            }
+        }
+        return count
+    }
+
+    private fun extractNewWords(previous: String, current: String): String {
+        if (previous.isBlank()) return current.trim()
+
+        val prevClean = previous.trim()
+        val currClean = current.trim()
+
+        val prevWords = prevClean.lowercase(Locale.ROOT).split(Regex("\\s+")).filter { it.isNotBlank() }
+        val currWords = currClean.lowercase(Locale.ROOT).split(Regex("\\s+")).filter { it.isNotBlank() }
+        val currOriginalWords = currClean.split(Regex("\\s+")).filter { it.isNotBlank() }
+
+        if (currWords.isEmpty()) return ""
+
+        var matchCount = 0
+        while (matchCount < prevWords.size && matchCount < currWords.size) {
+            val w1 = prevWords[matchCount].replace(Regex("[^a-zA-Z0-9]"), "")
+            val w2 = currWords[matchCount].replace(Regex("[^a-zA-Z0-9]"), "")
+            if (w1 == w2 || (w1.isNotEmpty() && w2.isNotEmpty() && (w1.startsWith(w2) || w2.startsWith(w1)))) {
+                matchCount++
+            } else {
+                break
+            }
+        }
+
+        if (matchCount >= currOriginalWords.size) {
+            return ""
+        }
+
+        val newWordsList = currOriginalWords.subList(matchCount, currOriginalWords.size)
+        return newWordsList.joinToString(" ").trim()
+    }
+
+    private fun calculateTextSimilarityRatio(s1: String, s2: String): Double {
+        if (s1.isEmpty() && s2.isEmpty()) return 1.0
+        if (s1.isEmpty() || s2.isEmpty()) return 0.0
+        val t1 = s1.trim().lowercase(Locale.ROOT)
+        val t2 = s2.trim().lowercase(Locale.ROOT)
+        if (t1 == t2) return 1.0
+        val distance = levenshteinDistance(t1, t2)
+        val maxLength = maxOf(t1.length, t2.length)
+        if (maxLength == 0) return 1.0
+        return 1.0 - (distance.toDouble() / maxLength.toDouble())
+    }
+
     private fun processNewSubtitle(text: String) {
-        // Guard against identical subtitle or tiny jitter updates
-        if (isDuplicate(text, lastSubtitleText)) return
+        val cleanCurrent = text.trim()
+        if (cleanCurrent.isEmpty()) return
 
-        lastSubtitleText = text
-        subtitleState.value = text
+        val now = System.currentTimeMillis()
 
+        // Requirement 9a: Clear history when no subtitle is detected for > 2 seconds
+        if (now - lastSubtitleTimeMs > 2000L) {
+            resetSubtitleHistory()
+        }
+        lastSubtitleTimeMs = now
+
+        val cleanPrevious = previousSubtitleText.trim()
+
+        // Requirement 9c: Clear history when a new sentence starts
+        val isNewSentence = cleanPrevious.isNotEmpty() && (
+            cleanPrevious.endsWith(".") || cleanPrevious.endsWith("?") || cleanPrevious.endsWith("!") || cleanPrevious.endsWith("।")
+        )
+
+        // Requirement 9b: Clear history when the subtitle changes completely
+        val similarityToPrevious = calculateTextSimilarityRatio(cleanPrevious, cleanCurrent)
+        val isCompletelyDifferent = cleanPrevious.isNotEmpty() && similarityToPrevious < 0.20 && extractCommonWordPrefixLength(cleanPrevious, cleanCurrent) == 0
+
+        if (isNewSentence || isCompletelyDifferent) {
+            resetSubtitleHistory()
+        }
+
+        val currentPrevious = previousSubtitleText.trim()
+
+        // Requirement 8: If OCR produces exactly the same subtitle again, ignore completely
+        if (currentPrevious.isNotEmpty() && cleanCurrent.equals(currentPrevious, ignoreCase = true)) {
+            return
+        }
+
+        // Requirement 5 & 7: Maintain rolling subtitle buffer & ignore > 85% similar duplicates
+        val isDuplicateInBuffer = subtitleRollingBuffer.any { buffered ->
+            buffered.equals(cleanCurrent, ignoreCase = true) || calculateTextSimilarityRatio(buffered, cleanCurrent) >= 0.85
+        }
+
+        // Requirement 3: Extract newly added words when current subtitle extends previous
+        val newWords = extractNewWords(currentPrevious, cleanCurrent)
+
+        // If no new words were added OR if it's > 85% similar without substantial new words, ignore!
+        if (newWords.isBlank() || (isDuplicateInBuffer && newWords.split(Regex("\\s+")).size < 2)) {
+            return
+        }
+
+        // Update memory & rolling buffer
+        previousSubtitleText = cleanCurrent
+        lastSubtitleText = cleanCurrent
+        if (!subtitleRollingBuffer.contains(cleanCurrent)) {
+            subtitleRollingBuffer.add(cleanCurrent)
+            if (subtitleRollingBuffer.size > 10) {
+                subtitleRollingBuffer.removeAt(0)
+            }
+        }
+
+        // Requirement 10: Always display latest complete subtitle on overlay
+        subtitleState.value = cleanCurrent
+
+        // Requirement 6: Only translate and speak newly added words
         serviceScope.launch {
             try {
-                // Translate
                 val targetLang = settingsManager.targetLanguage
                 val result = if (com.example.BuildConfig.GEMINI_API_KEY.isNotEmpty()) {
-                    translationService.translateGemini(text, targetLang)
+                    translationService.translateGemini(newWords, targetLang)
                 } else {
-                    translationService.translateGoogle(text, targetLang)
+                    translationService.translateGoogle(newWords, targetLang)
                 }
 
                 if (result is TranslationResult.Success) {
@@ -581,7 +712,7 @@ class SubtitleAccessibilityService : AccessibilityService() {
                     try {
                         historyRepository.insert(
                             TranslationHistory(
-                                originalText = text,
+                                originalText = cleanCurrent,
                                 translatedText = result.translatedText,
                                 sourceLanguage = result.detectedLanguage.uppercase(Locale.ROOT)
                             )
@@ -590,7 +721,7 @@ class SubtitleAccessibilityService : AccessibilityService() {
                         Log.e("SubtitleService", "Failed to save history to Room", e)
                     }
 
-                    // TTS speak in target language if translation voice is enabled and not muted
+                    // TTS speak ONLY the translated newly added words
                     val isVoiceOn = settingsManager.isVoiceEnabled && isTranslatingState.value && !isMutedState.value
                     if (isVoiceOn) {
                         try {
