@@ -639,7 +639,7 @@ class SubtitleAccessibilityService : AccessibilityService() {
 
         val now = System.currentTimeMillis()
 
-        // Requirement 9a: Clear history when no subtitle is detected for > 2 seconds
+        // Clear history only when no subtitle has been detected for > 2 seconds
         if (now - lastSubtitleTimeMs > 2000L) {
             resetSubtitleHistory()
         }
@@ -647,47 +647,66 @@ class SubtitleAccessibilityService : AccessibilityService() {
 
         val cleanPrevious = previousSubtitleText.trim()
 
-        // Requirement 9c: Clear history when a new sentence starts
+        // Check if previous sentence ended or caption changed completely
         val isNewSentence = cleanPrevious.isNotEmpty() && (
             cleanPrevious.endsWith(".") || cleanPrevious.endsWith("?") || cleanPrevious.endsWith("!") || cleanPrevious.endsWith("।")
         )
-
-        // Requirement 9b: Clear history when the subtitle changes completely
         val similarityToPrevious = calculateTextSimilarityRatio(cleanPrevious, cleanCurrent)
         val isCompletelyDifferent = cleanPrevious.isNotEmpty() && similarityToPrevious < 0.20 && extractCommonWordPrefixLength(cleanPrevious, cleanCurrent) == 0
 
         if (isNewSentence || isCompletelyDifferent) {
-            resetSubtitleHistory()
+            previousSubtitleText = "" // Only reset previousSubtitleText contiguous prefix; KEEP subtitleRollingBuffer!
         }
 
         val currentPrevious = previousSubtitleText.trim()
 
-        // Requirement 8: If OCR produces exactly the same subtitle again, ignore completely
-        if (currentPrevious.isNotEmpty() && cleanCurrent.equals(currentPrevious, ignoreCase = true)) {
+        // Normalized strings for comparison
+        val normCurrent = cleanCurrent.lowercase(Locale.ROOT).replace(Regex("[^a-zA-Z0-9\\s]"), "").trim()
+        val normPrevious = currentPrevious.lowercase(Locale.ROOT).replace(Regex("[^a-zA-Z0-9\\s]"), "").trim()
+
+        // 1. Exact or near duplicate of previous contiguous subtitle
+        if (normPrevious.isNotEmpty() && (normCurrent == normPrevious || calculateTextSimilarityRatio(normPrevious, normCurrent) >= 0.88)) {
+            subtitleState.value = cleanCurrent
             return
         }
 
-        // Requirement 5 & 7: Maintain rolling subtitle buffer & ignore > 85% similar duplicates
-        val isDuplicateInBuffer = subtitleRollingBuffer.any { buffered ->
-            buffered.equals(cleanCurrent, ignoreCase = true) || calculateTextSimilarityRatio(buffered, cleanCurrent) >= 0.85
+        // 2. Check if cleanCurrent is already in rolling buffer or is a substring of something already spoken
+        val isAlreadyInRollingBuffer = subtitleRollingBuffer.any { buffered ->
+            val normBuffered = buffered.lowercase(Locale.ROOT).replace(Regex("[^a-zA-Z0-9\\s]"), "").trim()
+            normBuffered == normCurrent ||
+            (normBuffered.isNotEmpty() && normCurrent.isNotEmpty() && normBuffered.contains(normCurrent)) ||
+            calculateTextSimilarityRatio(normBuffered, normCurrent) >= 0.85
         }
 
-        // Requirement 3: Extract newly added words when current subtitle extends previous
+        // 3. Extract newly added words
         val newWords = extractNewWords(currentPrevious, cleanCurrent)
+        val normNewWords = newWords.lowercase(Locale.ROOT).replace(Regex("[^a-zA-Z0-9\\s]"), "").trim()
 
-        // If no new words were added OR if it's > 85% similar without substantial new words, ignore!
-        if (newWords.isBlank() || (isDuplicateInBuffer && newWords.split(Regex("\\s+")).size < 2)) {
+        // 4. Check if newWords are empty OR if normNewWords was already in rolling buffer
+        val isNewWordsAlreadySpoken = normNewWords.isNotEmpty() && subtitleRollingBuffer.any { buffered ->
+            val normBuffered = buffered.lowercase(Locale.ROOT).replace(Regex("[^a-zA-Z0-9\\s]"), "").trim()
+            normBuffered == normNewWords || normBuffered.contains(normNewWords) || calculateTextSimilarityRatio(normBuffered, normNewWords) >= 0.85
+        }
+
+        if (newWords.isBlank() || isAlreadyInRollingBuffer || isNewWordsAlreadySpoken) {
+            subtitleState.value = cleanCurrent
             return
         }
 
         // Update memory & rolling buffer
         previousSubtitleText = cleanCurrent
         lastSubtitleText = cleanCurrent
+
         if (!subtitleRollingBuffer.contains(cleanCurrent)) {
             subtitleRollingBuffer.add(cleanCurrent)
-            if (subtitleRollingBuffer.size > 10) {
-                subtitleRollingBuffer.removeAt(0)
-            }
+        }
+        if (normNewWords.isNotEmpty() && !subtitleRollingBuffer.contains(normNewWords)) {
+            subtitleRollingBuffer.add(normNewWords)
+        }
+
+        // Keep last 20 entries in rolling buffer
+        while (subtitleRollingBuffer.size > 20) {
+            subtitleRollingBuffer.removeAt(0)
         }
 
         // Requirement 10: Always display latest complete subtitle on overlay
